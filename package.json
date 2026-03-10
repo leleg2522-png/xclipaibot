@@ -12,6 +12,7 @@
   "dependencies": {
     "@types/node": "^22.13.11",
     "axios": "^1.13.6",
+    "express": "^5.2.1",
     "node-telegram-bot-api": "^0.67.0"
   }
 }
