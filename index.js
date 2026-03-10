@@ -694,13 +694,50 @@ bot.onText(/\/generate/, async (msg) => {
     return;
   }
 
+  bot.sendMessage(chatId, "Pilih kualitas video:", {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "⚡ Standard (720p)", callback_data: "quality_std" },
+          { text: "🔥 Pro (1080p)", callback_data: "quality_pro" },
+        ],
+      ],
+    },
+  });
+});
+
+bot.on("callback_query", async (query) => {
+  const chatId = query.message.chat.id;
+  const data = query.data;
+
+  if (!data.startsWith("quality_")) return;
+
+  const msg = { chat: query.message.chat, from: query.from };
+  const session = getSession(msg);
+
+  if (!session.loggedIn) {
+    bot.answerCallbackQuery(query.id, { text: "Kamu harus login dulu." });
+    return;
+  }
+
+  if (session.isGenerating) {
+    bot.answerCallbackQuery(query.id, { text: "Sedang dalam proses generate." });
+    return;
+  }
+
+  if (!session.imageFile || !session.videoFile) {
+    bot.answerCallbackQuery(query.id, { text: "Foto atau video belum lengkap." });
+    return;
+  }
+
+  const quality = data === "quality_pro" ? "pro" : "std";
+  session.quality = quality;
   session.isGenerating = true;
 
-  const qualityLabel = session.quality === "pro" ? "Pro (1080p)" : "Standard (720p)";
-  bot.sendMessage(
-    chatId,
-    `Memulai generate motion control video...\n\nKualitas: ${qualityLabel}\nOrientasi: ${session.orientation}\nPrompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 1-5 menit.`
-  );
+  const qualityLabel = quality === "pro" ? "Pro (1080p)" : "Standard (720p)";
+
+  bot.answerCallbackQuery(query.id);
+  try { await bot.editMessageText(`Kualitas dipilih: ${qualityLabel}\n\nMemulai generate motion control video...\nOrientasi: ${session.orientation}\nPrompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`, { chat_id: chatId, message_id: query.message.message_id }); } catch (e) {}
 
   try {
     const submitResult = await submitMotionControl(session);
@@ -733,7 +770,7 @@ bot.onText(/\/generate/, async (msg) => {
           try {
             console.log("Attempting sendVideo:", videoUrl.substring(0, 80));
             await bot.sendVideo(chatId, videoUrl, {
-              caption: "Motion control video selesai!",
+              caption: `Motion control video selesai! (${qualityLabel})`,
             });
             console.log("sendVideo success");
           } catch (sendErr) {
@@ -743,7 +780,7 @@ bot.onText(/\/generate/, async (msg) => {
               const tempPath = path.join(UPLOAD_DIR, `result_${Date.now()}.mp4`);
               fs.writeFileSync(tempPath, videoResponse.data);
               await bot.sendVideo(chatId, tempPath, {
-                caption: "Motion control video selesai!",
+                caption: `Motion control video selesai! (${qualityLabel})`,
               });
               cleanupFile(tempPath);
               console.log("sendVideo via download success");
