@@ -4,9 +4,26 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { HttpsProxyAgent } = require("https-proxy-agent");
+const { Pool } = require("pg");
+const bcrypt = require("bcrypt");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.REPLIT_DEV_DOMAIN;
+const RAILWAY_DB_URL = process.env.RAILWAY_DATABASE_URL;
+
+let db = null;
+if (RAILWAY_DB_URL) {
+  db = new Pool({
+    connectionString: RAILWAY_DB_URL,
+    ssl: { rejectUnauthorized: false },
+    max: 5,
+  });
+  db.query("SELECT 1")
+    .then(() => console.log("Database Railway terhubung!"))
+    .catch((err) => console.error("Database connection error:", err.message));
+} else {
+  console.warn("RAILWAY_DATABASE_URL not set - login feature disabled");
+}
 
 if (!TELEGRAM_TOKEN) {
   console.error("TELEGRAM_BOT_TOKEN is not set");
@@ -153,9 +170,60 @@ function getSession(msg) {
       orientation: "video",
       quality: "std",
       isGenerating: false,
+      loggedIn: false,
+      userId: null,
+      username: null,
     };
   }
   return userSessions[key];
+}
+
+async function authenticateUser(username, password) {
+  if (!db) return { success: false, error: "Database tidak tersedia." };
+  try {
+    const result = await db.query(
+      "SELECT id, username, password_hash FROM users WHERE username = $1",
+      [username]
+    );
+    if (result.rows.length === 0) {
+      return { success: false, error: "Username tidak ditemukan." };
+    }
+    const user = result.rows[0];
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) {
+      return { success: false, error: "Password salah." };
+    }
+    return { success: true, userId: user.id, username: user.username };
+  } catch (err) {
+    console.error("Auth error:", err.message);
+    return { success: false, error: "Gagal mengakses database." };
+  }
+}
+
+async function checkMotionSubscription(userId) {
+  if (!db) return { active: false, reason: "Database tidak tersedia." };
+  try {
+    const result = await db.query(
+      `SELECT ms.id, ms.expired_at, ms.is_active, mr.name as room_name
+       FROM motion_subscriptions ms
+       LEFT JOIN motion_rooms mr ON ms.motion_room_id = mr.id
+       WHERE ms.user_id = $1 AND ms.is_active = true AND ms.expired_at > NOW()
+       ORDER BY ms.expired_at DESC LIMIT 1`,
+      [userId]
+    );
+    if (result.rows.length === 0) {
+      return { active: false, reason: "Kamu belum punya langganan Motion Control yang aktif." };
+    }
+    const sub = result.rows[0];
+    return {
+      active: true,
+      expiredAt: sub.expired_at,
+      roomName: sub.room_name,
+    };
+  } catch (err) {
+    console.error("Subscription check error:", err.message);
+    return { active: false, reason: "Gagal mengecek langganan." };
+  }
 }
 
 function resetSession(msg) {
@@ -174,15 +242,18 @@ bot.onText(/\/start/, (msg) => {
     msg.chat.id,
     `🎬 *Kling 2.6 Motion Control Bot*
 
-Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Freepik Kling 2.6 Motion Control API.
+Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Freepik Kling 2.6 Motion Control API\\.
 
 *Cara pakai:*
-1️⃣ Kirim foto karakter
-2️⃣ Kirim video referensi gerakan
-3️⃣ Ketik /generate untuk mulai
+1️⃣ Login dulu: /login username password
+2️⃣ Kirim foto karakter
+3️⃣ Kirim video referensi gerakan
+4️⃣ Ketik /generate untuk mulai
 
 *Perintah:*
 /start \\- Mulai ulang
+/login \\- Login dengan akun xclip
+/logout \\- Logout
 /generate \\- Generate video
 /prompt \\[teks\\] \\- Set prompt tambahan
 /orientation \\[video|image\\] \\- Set orientasi karakter
@@ -191,6 +262,7 @@ Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan 
 /reset \\- Reset session
 
 *Catatan:*
+• Harus login dan punya langganan Motion aktif
 • Foto: min 300x300px, max 10MB \\(JPG/PNG/WEBP\\)
 • Video: durasi 3\\-30 detik, max 100MB \\(MP4/MOV/WEBM\\)
 • Orientasi "video" = max 30 detik, "image" = max 10 detik`,
@@ -198,22 +270,102 @@ Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan 
   );
 });
 
+bot.onText(/\/login (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const session = getSession(msg);
+
+  if (session.loggedIn) {
+    bot.sendMessage(chatId, `Kamu sudah login sebagai ${session.username}. Ketik /logout untuk keluar.`);
+    return;
+  }
+
+  const args = match[1].trim().split(/\s+/);
+  if (args.length < 2) {
+    bot.sendMessage(chatId, "Format: /login username password");
+    return;
+  }
+
+  const [username, password] = args;
+
+  try {
+    await bot.deleteMessage(chatId, msg.message_id);
+  } catch (e) {}
+
+  const authResult = await authenticateUser(username, password);
+
+  if (!authResult.success) {
+    bot.sendMessage(chatId, "Login gagal: Username atau password salah.");
+    return;
+  }
+
+  const subResult = await checkMotionSubscription(authResult.userId);
+
+  session.loggedIn = true;
+  session.userId = authResult.userId;
+  session.username = authResult.username;
+
+  if (subResult.active) {
+    const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
+      day: "numeric", month: "long", year: "numeric",
+    });
+    bot.sendMessage(
+      chatId,
+      `Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan Motion Control: Aktif\nRoom: ${subResult.roomName || "-"}\nBerlaku sampai: ${expDate}\n\nSilakan kirim foto dan video, lalu ketik /generate.`
+    );
+  } else {
+    bot.sendMessage(
+      chatId,
+      `Login berhasil! Selamat datang, ${authResult.username}.\n\n⚠️ ${subResult.reason}\nHubungi admin untuk berlangganan Motion Control.`
+    );
+  }
+});
+
+bot.onText(/\/logout/, (msg) => {
+  const chatId = msg.chat.id;
+  const session = getSession(msg);
+
+  if (!session.loggedIn) {
+    bot.sendMessage(chatId, "Kamu belum login.");
+    return;
+  }
+
+  const username = session.username;
+  resetSession(msg);
+  bot.sendMessage(chatId, `Logout berhasil. Sampai jumpa, ${username}!`);
+});
+
 bot.onText(/\/reset/, (msg) => {
   resetSession(msg);
   bot.sendMessage(msg.chat.id, "Session direset. Silakan kirim foto dan video baru.");
 });
 
-bot.onText(/\/status/, (msg) => {
+bot.onText(/\/status/, async (msg) => {
   const session = getSession(msg);
   const lines = [
-    "Status Session:",
+    "📋 Status Session:",
+    `Login: ${session.loggedIn ? `Ya (${session.username})` : "Belum"}`,
+  ];
+
+  if (session.loggedIn) {
+    const subResult = await checkMotionSubscription(session.userId);
+    if (subResult.active) {
+      const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
+        day: "numeric", month: "long", year: "numeric",
+      });
+      lines.push(`Langganan: Aktif (s/d ${expDate})`);
+    } else {
+      lines.push(`Langganan: Tidak aktif`);
+    }
+  }
+
+  lines.push(
     `Foto: ${session.imageFile ? "Sudah ada" : "Belum"}`,
     `Video: ${session.videoFile ? "Sudah ada" : "Belum"}`,
     `Prompt: ${session.prompt || "(kosong)"}`,
     `Orientasi: ${session.orientation}`,
     `Kualitas: ${session.quality}`,
     `Generating: ${session.isGenerating ? "Ya" : "Tidak"}`,
-  ];
+  );
   bot.sendMessage(msg.chat.id, lines.join("\n"));
 });
 
@@ -424,6 +576,17 @@ async function pollForResult(chatId, taskId) {
 bot.onText(/\/generate/, async (msg) => {
   const chatId = msg.chat.id;
   const session = getSession(msg);
+
+  if (!session.loggedIn) {
+    bot.sendMessage(chatId, "Kamu harus login dulu. Ketik: /login username password");
+    return;
+  }
+
+  const subResult = await checkMotionSubscription(session.userId);
+  if (!subResult.active) {
+    bot.sendMessage(chatId, `⚠️ ${subResult.reason}\nHubungi admin untuk berlangganan.`);
+    return;
+  }
 
   if (session.isGenerating) {
     bot.sendMessage(chatId, "Sedang dalam proses generate. Tunggu sampai selesai.");
