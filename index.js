@@ -602,7 +602,7 @@ async function checkTaskStatus(taskId, apiKey) {
   return response.data;
 }
 
-async function pollForResult(chatId, taskId) {
+async function pollForResult(chatId, taskId, apiKey) {
   const maxAttempts = 120;
   const intervalMs = 10000;
 
@@ -610,7 +610,7 @@ async function pollForResult(chatId, taskId) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
 
     try {
-      const result = await checkTaskStatus(taskId);
+      const result = await checkTaskStatus(taskId, apiKey);
       const status = result?.data?.status;
       console.log(`Poll #${i + 1} for task ${taskId}: status=${status}`);
 
@@ -685,7 +685,7 @@ bot.onText(/\/generate/, async (msg) => {
 
     bot.sendMessage(chatId, `Task berhasil disubmit!\nTask ID: ${taskId}\n\nMenunggu hasil...`);
 
-    const result = await pollForResult(chatId, taskId);
+    const result = await pollForResult(chatId, taskId, session.apiKey);
 
     if (!result) {
       bot.sendMessage(chatId, "Timeout: Video belum selesai setelah 20 menit. Coba lagi nanti.");
