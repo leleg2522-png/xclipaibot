@@ -106,7 +106,7 @@ function getProxyAgent() {
   return { httpsAgent: agent, httpAgent: agent, proxy: false };
 }
 
-function markProxyFailed(proxyUrl, cooldownMs = 300000) {
+function markProxyFailed(proxyUrl, cooldownMs = 240000) {
   proxyFailures[proxyUrl] = { until: Date.now() + cooldownMs };
   console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} cooldown for ${cooldownMs / 1000}s`);
 }
@@ -650,7 +650,7 @@ async function submitMotionControl(session) {
       const status = err.response?.status;
       const msg = err.response?.data?.message || err.message;
       if (status === 403 && msg.includes("blocked")) {
-        if (proxyUrl) markProxyFailed(proxyUrl, 600000);
+        if (proxyUrl) markProxyFailed(proxyUrl, 240000);
         console.log(`Submit blocked on proxy, trying next...`);
         continue;
       }
@@ -717,7 +717,7 @@ async function pollForResult(chatId, taskId, apiKey) {
       consecutiveErrors++;
 
       if (status === 403 && msg.includes("blocked")) {
-        if (stickyProxy) markProxyFailed(stickyProxy, 600000);
+        if (stickyProxy) markProxyFailed(stickyProxy, 240000);
         bot.sendMessage(chatId, "Proxy kena blokir, task ini gagal. Silakan coba /generate lagi.");
         return null;
       }
