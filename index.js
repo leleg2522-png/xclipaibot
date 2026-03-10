@@ -5,7 +5,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { HttpsProxyAgent } = require("https-proxy-agent");
 const { Pool } = require("pg");
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.REPLIT_DEV_DOMAIN;
@@ -271,6 +271,7 @@ Catatan:
 
 bot.onText(/\/login(.*)/, async (msg, match) => {
   const chatId = msg.chat.id;
+  console.log(`/login command received from chat ${chatId}, user ${msg.from.id}`);
   const session = getSession(msg);
 
   if (session.loggedIn) {
@@ -279,6 +280,7 @@ bot.onText(/\/login(.*)/, async (msg, match) => {
   }
 
   const input = (match[1] || "").trim();
+  console.log(`Login input: "${input}" (length: ${input.length})`);
   if (!input) {
     bot.sendMessage(chatId, "Format: /login email password\n\nContoh: /login user@gmail.com password123");
     return;
@@ -291,6 +293,7 @@ bot.onText(/\/login(.*)/, async (msg, match) => {
   }
 
   const [loginInput, password] = args;
+  console.log(`Attempting login for: ${loginInput}`);
 
   try {
     await bot.deleteMessage(chatId, msg.message_id);
@@ -300,6 +303,7 @@ bot.onText(/\/login(.*)/, async (msg, match) => {
 
   try {
     const authResult = await authenticateUser(loginInput, password);
+    console.log(`Auth result: ${JSON.stringify({ success: authResult.success, userId: authResult.userId })}`);
 
     if (!authResult.success) {
       bot.sendMessage(chatId, "Login gagal: Username/email atau password salah.");
