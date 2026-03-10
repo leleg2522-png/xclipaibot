@@ -752,6 +752,16 @@ bot.onText(/\/generate/, async (msg) => {
     return;
   }
 
+  if (session.lastGenerateTime) {
+    const cooldownMs = 4 * 60 * 1000;
+    const elapsed = Date.now() - session.lastGenerateTime;
+    if (elapsed < cooldownMs) {
+      const remaining = Math.ceil((cooldownMs - elapsed) / 1000);
+      bot.sendMessage(chatId, `Cooldown aktif. Tunggu ${remaining} detik lagi sebelum generate berikutnya.`);
+      return;
+    }
+  }
+
   if (!session.imageFile) {
     bot.sendMessage(chatId, "Foto karakter belum ada. Kirim foto terlebih dahulu.");
     return;
@@ -801,6 +811,7 @@ bot.on("callback_query", async (query) => {
   const quality = data === "quality_pro" ? "pro" : "std";
   session.quality = quality;
   session.isGenerating = true;
+  session.lastGenerateTime = Date.now();
 
   const qualityLabel = quality === "pro" ? "Pro (1080p)" : "Standard (720p)";
 
