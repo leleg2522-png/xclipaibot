@@ -320,10 +320,13 @@ async function pollForResult(chatId, taskId) {
     try {
       const result = await checkTaskStatus(taskId);
       const status = result?.data?.status;
+      console.log(`Poll #${i + 1} for task ${taskId}: status=${status}`);
 
       if (status === "COMPLETED") {
+        console.log("Task completed! Generated URLs:", JSON.stringify(result?.data?.generated));
         return result;
       } else if (status === "FAILED" || status === "ERROR") {
+        console.log("Task failed:", JSON.stringify(result?.data));
         return result;
       }
 
@@ -332,7 +335,7 @@ async function pollForResult(chatId, taskId) {
         bot.sendMessage(chatId, `Masih memproses... (${elapsed} detik)`);
       }
     } catch (err) {
-      console.error(`Poll attempt ${i + 1} error:`, err.message);
+      console.error(`Poll attempt ${i + 1} error:`, err.response?.status, err.response?.data || err.message);
     }
   }
 
@@ -391,14 +394,30 @@ bot.onText(/\/generate/, async (msg) => {
 
     if (status === "COMPLETED") {
       const videoUrls = result?.data?.generated || [];
+      console.log("Sending video results:", videoUrls.length, "URLs");
       if (videoUrls.length > 0) {
         for (const videoUrl of videoUrls) {
           try {
+            console.log("Attempting sendVideo:", videoUrl.substring(0, 80));
             await bot.sendVideo(chatId, videoUrl, {
               caption: "Motion control video selesai!",
             });
+            console.log("sendVideo success");
           } catch (sendErr) {
-            await bot.sendMessage(chatId, `Video selesai! Download di sini:\n${videoUrl}`);
+            console.error("sendVideo failed:", sendErr.message);
+            try {
+              const videoResponse = await axios.get(videoUrl, { responseType: "arraybuffer" });
+              const tempPath = path.join(UPLOAD_DIR, `result_${Date.now()}.mp4`);
+              fs.writeFileSync(tempPath, videoResponse.data);
+              await bot.sendVideo(chatId, tempPath, {
+                caption: "Motion control video selesai!",
+              });
+              cleanupFile(tempPath);
+              console.log("sendVideo via download success");
+            } catch (dlErr) {
+              console.error("Download+send failed:", dlErr.message);
+              await bot.sendMessage(chatId, `Video selesai! Download di sini:\n${videoUrl}`);
+            }
           }
         }
       } else {
