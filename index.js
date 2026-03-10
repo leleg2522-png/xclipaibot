@@ -242,7 +242,7 @@ bot.onText(/\/start/, (msg) => {
     msg.chat.id,
     `🎬 *Kling 2.6 Motion Control Bot*
 
-Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Freepik Kling 2.6 Motion Control API\\.
+Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Freepik Kling 2\\.6 Motion Control API\\.
 
 *Cara pakai:*
 1️⃣ Login dulu: /login username password
@@ -257,7 +257,7 @@ Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan 
 /generate \\- Generate video
 /prompt \\[teks\\] \\- Set prompt tambahan
 /orientation \\[video|image\\] \\- Set orientasi karakter
-/quality \\[std|pro\\] \\- Set kualitas \\(std = 720p, pro = 1080p\\)
+/quality \\[std|pro\\] \\- Set kualitas \\(std \\= 720p, pro \\= 1080p\\)
 /status \\- Cek status session saat ini
 /reset \\- Reset session
 
@@ -265,7 +265,7 @@ Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan 
 • Harus login dan punya langganan Motion aktif
 • Foto: min 300x300px, max 10MB \\(JPG/PNG/WEBP\\)
 • Video: durasi 3\\-30 detik, max 100MB \\(MP4/MOV/WEBM\\)
-• Orientasi "video" = max 30 detik, "image" = max 10 detik`,
+• Orientasi "video" \\= max 30 detik, "image" \\= max 10 detik`,
     { parse_mode: "MarkdownV2" }
   );
 });
