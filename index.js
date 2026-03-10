@@ -178,15 +178,15 @@ function getSession(msg) {
   return userSessions[key];
 }
 
-async function authenticateUser(username, password) {
+async function authenticateUser(loginInput, password) {
   if (!db) return { success: false, error: "Database tidak tersedia." };
   try {
     const result = await db.query(
-      "SELECT id, username, password_hash FROM users WHERE username = $1",
-      [username]
+      "SELECT id, username, email, password_hash FROM users WHERE username = $1 OR email = $1",
+      [loginInput]
     );
     if (result.rows.length === 0) {
-      return { success: false, error: "Username tidak ditemukan." };
+      return { success: false, error: "Username/email tidak ditemukan." };
     }
     const user = result.rows[0];
     const match = await bcrypt.compare(password, user.password_hash);
@@ -245,14 +245,14 @@ bot.onText(/\/start/, (msg) => {
 Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Freepik Kling 2.6 Motion Control API.
 
 Cara pakai:
-1️⃣ Login dulu: /login username password
+1️⃣ Login dulu: /login email password
 2️⃣ Kirim foto karakter
 3️⃣ Kirim video referensi gerakan
 4️⃣ Ketik /generate untuk mulai
 
 Perintah:
 /start - Mulai ulang
-/login - Login dengan akun xclip
+/login - Login dengan email/username xclip
 /logout - Logout
 /generate - Generate video
 /prompt [teks] - Set prompt tambahan
@@ -280,48 +280,55 @@ bot.onText(/\/login(.*)/, async (msg, match) => {
 
   const input = (match[1] || "").trim();
   if (!input) {
-    bot.sendMessage(chatId, "Format: /login username password\n\nContoh: /login johndoe password123");
+    bot.sendMessage(chatId, "Format: /login email password\n\nContoh: /login user@gmail.com password123");
     return;
   }
 
   const args = input.split(/\s+/);
   if (args.length < 2) {
-    bot.sendMessage(chatId, "Format: /login username password\n\nContoh: /login johndoe password123");
+    bot.sendMessage(chatId, "Format: /login email password\n\nContoh: /login user@gmail.com password123");
     return;
   }
 
-  const [username, password] = args;
+  const [loginInput, password] = args;
 
   try {
     await bot.deleteMessage(chatId, msg.message_id);
-  } catch (e) {}
-
-  const authResult = await authenticateUser(username, password);
-
-  if (!authResult.success) {
-    bot.sendMessage(chatId, "Login gagal: Username atau password salah.");
-    return;
+  } catch (e) {
+    console.log("Could not delete login message:", e.message);
   }
 
-  const subResult = await checkMotionSubscription(authResult.userId);
+  try {
+    const authResult = await authenticateUser(loginInput, password);
 
-  session.loggedIn = true;
-  session.userId = authResult.userId;
-  session.username = authResult.username;
+    if (!authResult.success) {
+      bot.sendMessage(chatId, "Login gagal: Username/email atau password salah.");
+      return;
+    }
 
-  if (subResult.active) {
-    const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
-      day: "numeric", month: "long", year: "numeric",
-    });
-    bot.sendMessage(
-      chatId,
-      `Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan Motion Control: Aktif\nRoom: ${subResult.roomName || "-"}\nBerlaku sampai: ${expDate}\n\nSilakan kirim foto dan video, lalu ketik /generate.`
-    );
-  } else {
-    bot.sendMessage(
-      chatId,
-      `Login berhasil! Selamat datang, ${authResult.username}.\n\n⚠️ ${subResult.reason}\nHubungi admin untuk berlangganan Motion Control.`
-    );
+    const subResult = await checkMotionSubscription(authResult.userId);
+
+    session.loggedIn = true;
+    session.userId = authResult.userId;
+    session.username = authResult.username;
+
+    if (subResult.active) {
+      const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
+        day: "numeric", month: "long", year: "numeric",
+      });
+      bot.sendMessage(
+        chatId,
+        `Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan Motion Control: Aktif\nRoom: ${subResult.roomName || "-"}\nBerlaku sampai: ${expDate}\n\nSilakan kirim foto dan video, lalu ketik /generate.`
+      );
+    } else {
+      bot.sendMessage(
+        chatId,
+        `Login berhasil! Selamat datang, ${authResult.username}.\n\n⚠️ ${subResult.reason}\nHubungi admin untuk berlangganan Motion Control.`
+      );
+    }
+  } catch (err) {
+    console.error("Login handler error:", err);
+    bot.sendMessage(chatId, "Terjadi kesalahan saat login. Coba lagi nanti.");
   }
 });
 
