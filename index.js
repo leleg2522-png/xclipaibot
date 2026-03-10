@@ -299,7 +299,7 @@ async function submitMotionControl(session) {
 }
 
 async function checkTaskStatus(taskId) {
-  const url = `https://api.freepik.com/v1/ai/video/kling-v2-6-motion-control/${taskId}`;
+  const url = `https://api.freepik.com/v1/ai/image-to-video/kling-v2-6/${taskId}`;
 
   const response = await axios.get(url, {
     headers: {
