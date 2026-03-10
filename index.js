@@ -55,6 +55,7 @@ console.log(`Loaded ${PROXIES.length} proxy(ies)`);
 let keyIndex = 0;
 let proxyIndex = 0;
 const keyFailures = {};
+const proxyFailures = {};
 
 function getNextApiKey() {
   const now = Date.now();
@@ -74,9 +75,26 @@ function getNextApiKey() {
 
 function getNextProxy() {
   if (PROXIES.length === 0) return null;
-  const proxy = PROXIES[proxyIndex % PROXIES.length];
+  const now = Date.now();
+  for (let i = 0; i < PROXIES.length; i++) {
+    const idx = (proxyIndex + i) % PROXIES.length;
+    const proxy = PROXIES[idx];
+    const failure = proxyFailures[proxy];
+    if (failure && failure.until > now) {
+      continue;
+    }
+    proxyIndex = (idx + 1) % PROXIES.length;
+    return proxy;
+  }
   proxyIndex = (proxyIndex + 1) % PROXIES.length;
-  return proxy;
+  return PROXIES[proxyIndex];
+}
+
+function getStickyProxyAgent(proxyUrl) {
+  if (!USE_PROXY || !proxyUrl) return {};
+  const agent = new HttpsProxyAgent(proxyUrl);
+  console.log(`Using proxy: ${proxyUrl.replace(/:[^:@]+@/, ":***@")}`);
+  return { httpsAgent: agent, httpAgent: agent, proxy: false };
 }
 
 function getProxyAgent() {
@@ -88,6 +106,15 @@ function getProxyAgent() {
   return { httpsAgent: agent, httpAgent: agent, proxy: false };
 }
 
+function markProxyFailed(proxyUrl, cooldownMs = 300000) {
+  proxyFailures[proxyUrl] = { until: Date.now() + cooldownMs };
+  console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} cooldown for ${cooldownMs / 1000}s`);
+}
+
+function markProxyOk(proxyUrl) {
+  delete proxyFailures[proxyUrl];
+}
+
 function markKeyFailed(key, cooldownMs = 60000) {
   keyFailures[key] = { until: Date.now() + cooldownMs };
   console.log(`API key ...${key.slice(-6)} cooldown for ${cooldownMs / 1000}s`);
@@ -95,6 +122,10 @@ function markKeyFailed(key, cooldownMs = 60000) {
 
 function markKeyOk(key) {
   delete keyFailures[key];
+}
+
+function randomJitter(baseMs) {
+  return baseMs + Math.floor(Math.random() * 5000);
 }
 
 const UPLOAD_DIR = path.join(__dirname, "uploads");
@@ -599,50 +630,73 @@ async function submitMotionControl(session) {
   const apiKey = getNextApiKey();
   console.log(`Using API key ...${apiKey.slice(-6)} for submit`);
 
-  try {
-    const response = await axios.post(endpoint, body, {
-      headers: {
-        "Content-Type": "application/json",
-        "x-freepik-api-key": apiKey,
-      },
-      ...getProxyAgent(),
-    });
-    markKeyOk(apiKey);
-    session.apiKey = apiKey;
-    return response.data;
-  } catch (err) {
-    if (err.response?.status === 429 || err.response?.status === 403) {
-      markKeyFailed(apiKey, 120000);
+  const maxRetries = PROXIES.length + 1;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const proxyUrl = getNextProxy();
+    try {
+      const response = await axios.post(endpoint, body, {
+        headers: {
+          "Content-Type": "application/json",
+          "x-freepik-api-key": apiKey,
+        },
+        ...getStickyProxyAgent(proxyUrl),
+      });
+      markKeyOk(apiKey);
+      if (proxyUrl) markProxyOk(proxyUrl);
+      session.apiKey = apiKey;
+      session.submitProxy = proxyUrl;
+      return response.data;
+    } catch (err) {
+      const status = err.response?.status;
+      const msg = err.response?.data?.message || err.message;
+      if (status === 403 && msg.includes("blocked")) {
+        if (proxyUrl) markProxyFailed(proxyUrl, 600000);
+        console.log(`Submit blocked on proxy, trying next...`);
+        continue;
+      }
+      if (status === 429 || status === 403) {
+        markKeyFailed(apiKey, 120000);
+      }
+      throw err;
     }
-    throw err;
   }
+  throw new Error("Semua proxy kena blokir. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey) {
+async function checkTaskStatus(taskId, apiKey, stickyProxy) {
   const url = `https://api.freepik.com/v1/ai/image-to-video/kling-v2-6/${taskId}`;
   const key = apiKey || getNextApiKey();
 
+  const proxyConfig = stickyProxy ? getStickyProxyAgent(stickyProxy) : getProxyAgent();
   const response = await axios.get(url, {
     headers: {
       "x-freepik-api-key": key,
     },
-    ...getProxyAgent(),
+    ...proxyConfig,
   });
 
   return response.data;
 }
 
 async function pollForResult(chatId, taskId, apiKey) {
-  const maxAttempts = 120;
-  const intervalMs = 10000;
+  const maxAttempts = 60;
+  const baseIntervalMs = 20000;
+
+  const stickyProxy = getNextProxy();
+  console.log(`Task ${taskId} assigned to proxy: ${stickyProxy ? stickyProxy.replace(/:[^:@]+@/, ":***@") : "direct"}`);
+
+  let consecutiveErrors = 0;
 
   for (let i = 0; i < maxAttempts; i++) {
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const waitMs = randomJitter(baseIntervalMs);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
 
     try {
-      const result = await checkTaskStatus(taskId, apiKey);
+      const result = await checkTaskStatus(taskId, apiKey, stickyProxy);
       const status = result?.data?.status;
       console.log(`Poll #${i + 1} for task ${taskId}: status=${status}`);
+      consecutiveErrors = 0;
+      if (stickyProxy) markProxyOk(stickyProxy);
 
       if (status === "COMPLETED") {
         console.log("Task completed! Generated URLs:", JSON.stringify(result?.data?.generated));
@@ -652,12 +706,26 @@ async function pollForResult(chatId, taskId, apiKey) {
         return result;
       }
 
-      if (i > 0 && i % 6 === 0) {
-        const elapsed = Math.round(((i + 1) * intervalMs) / 1000);
+      if (i > 0 && i % 4 === 0) {
+        const elapsed = Math.round(((i + 1) * baseIntervalMs) / 1000);
         bot.sendMessage(chatId, `Masih memproses... (${elapsed} detik)`);
       }
     } catch (err) {
-      console.error(`Poll attempt ${i + 1} error:`, err.response?.status, err.response?.data || err.message);
+      const status = err.response?.status;
+      const msg = err.response?.data?.message || err.message;
+      console.error(`Poll attempt ${i + 1} error:`, status, err.response?.data || err.message);
+      consecutiveErrors++;
+
+      if (status === 403 && msg.includes("blocked")) {
+        if (stickyProxy) markProxyFailed(stickyProxy, 600000);
+        bot.sendMessage(chatId, "Proxy kena blokir, task ini gagal. Silakan coba /generate lagi.");
+        return null;
+      }
+
+      if (consecutiveErrors >= 5) {
+        bot.sendMessage(chatId, "Terlalu banyak error berturut-turut. Silakan coba /generate lagi.");
+        return null;
+      }
     }
   }
 
