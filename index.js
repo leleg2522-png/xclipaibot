@@ -3,6 +3,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { HttpsProxyAgent } = require("https-proxy-agent");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.REPLIT_DEV_DOMAIN;
@@ -20,9 +21,21 @@ if (API_KEYS.length === 0) {
   process.exit(1);
 }
 
+const RAW_PROXIES = process.env.PROXY_LIST || "";
+const PROXIES = RAW_PROXIES.split(",").map((p) => p.trim()).filter(Boolean).map((p) => {
+  const parts = p.split(":");
+  if (parts.length === 4) {
+    const [host, port, user, pass] = parts;
+    return `http://${user}:${pass}@${host}:${port}`;
+  }
+  return p;
+});
+
 console.log(`Loaded ${API_KEYS.length} Freepik API key(s)`);
+console.log(`Loaded ${PROXIES.length} proxy(ies)`);
 
 let keyIndex = 0;
+let proxyIndex = 0;
 const keyFailures = {};
 
 function getNextApiKey() {
@@ -39,6 +52,21 @@ function getNextApiKey() {
   }
   keyIndex = (keyIndex + 1) % API_KEYS.length;
   return API_KEYS[keyIndex];
+}
+
+function getNextProxy() {
+  if (PROXIES.length === 0) return null;
+  const proxy = PROXIES[proxyIndex % PROXIES.length];
+  proxyIndex = (proxyIndex + 1) % PROXIES.length;
+  return proxy;
+}
+
+function getProxyAgent() {
+  const proxyUrl = getNextProxy();
+  if (!proxyUrl) return {};
+  const agent = new HttpsProxyAgent(proxyUrl);
+  console.log(`Using proxy: ${proxyUrl.replace(/:[^:@]+@/, ":***@")}`);
+  return { httpsAgent: agent, httpAgent: agent, proxy: false };
 }
 
 function markKeyFailed(key, cooldownMs = 60000) {
@@ -329,6 +357,7 @@ async function submitMotionControl(session) {
         "Content-Type": "application/json",
         "x-freepik-api-key": apiKey,
       },
+      ...getProxyAgent(),
     });
     markKeyOk(apiKey);
     session.apiKey = apiKey;
@@ -349,6 +378,7 @@ async function checkTaskStatus(taskId, apiKey) {
     headers: {
       "x-freepik-api-key": key,
     },
+    ...getProxyAgent(),
   });
 
   return response.data;

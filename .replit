@@ -42,3 +42,8 @@ outputType = "console"
 [[ports]]
 localPort = 3000
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+PROXY_LIST = "212.236.127.69:12323:14afbc135d758:324073ad27,212.236.136.28:12323:14afbc135d758:324073ad27,109.107.135.194:12323:14afbc135d758:324073ad27"
