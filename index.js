@@ -246,18 +246,40 @@ async function checkSubscription(userId) {
   }
 }
 
-function resetSession(msg) {
+function resetSession(msg, fullReset = false) {
   const key = sessionKey(msg);
   const session = userSessions[key];
-  if (session) {
-    cleanupFile(session.imageFile?.localPath);
-    cleanupFile(session.videoFile?.localPath);
+  if (!session) return;
+
+  cleanupFile(session.imageFile?.localPath);
+  cleanupFile(session.videoFile?.localPath);
+
+  if (fullReset) {
+    delete userSessions[key];
+  } else {
+    session.imageFile = null;
+    session.videoFile = null;
+    session.prompt = null;
+    session.orientation = "video";
+    session.quality = "std";
+    session.isGenerating = false;
+    session.loginStep = null;
+    session.loginEmail = null;
   }
-  delete userSessions[key];
 }
 
 bot.onText(/\/start/, (msg) => {
+  const session = getSession(msg);
+  const wasLoggedIn = session.loggedIn;
+  const savedUsername = session.username;
+  const savedUserId = session.userId;
   resetSession(msg);
+  if (wasLoggedIn) {
+    const s = getSession(msg);
+    s.loggedIn = true;
+    s.username = savedUsername;
+    s.userId = savedUserId;
+  }
   bot.sendMessage(
     msg.chat.id,
 `🎬 Kling 2.6 Motion Control Bot
@@ -369,7 +391,7 @@ bot.onText(/\/logout/, (msg) => {
   }
 
   const username = session.username;
-  resetSession(msg);
+  resetSession(msg, true);
   bot.sendMessage(chatId, `Logout berhasil. Sampai jumpa, ${username}!`);
 });
 
