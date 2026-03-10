@@ -46,5 +46,5 @@ externalPort = 80
 [userenv]
 
 [userenv.shared]
-PROXY_LIST = "103.253.147.248:3128:botproxy:Xclip2026Proxy!,143.198.82.20:3128:botproxy:Xclip2026Proxy!"
+PROXY_LIST = "103.253.147.248:3128:botproxy:Xclip2026Proxy!,143.198.82.20:3128:botproxy:Xclip2026Proxy!,157.245.54.107:3128:botproxy:Xclip2026Proxy!,178.128.127.228:3128:botproxy:Xclip2026Proxy!,152.42.203.248:3128:botproxy:Xclip2026Proxy!,159.223.77.139:3128:botproxy:Xclip2026Proxy!,167.71.202.237:3128:botproxy:Xclip2026Proxy!,159.65.8.28:3128:botproxy:Xclip2026Proxy!,68.183.184.138:3128:botproxy:Xclip2026Proxy!,165.232.174.153:3128:botproxy:Xclip2026Proxy!,174.138.21.1:3128:botproxy:Xclip2026Proxy!,206.189.91.61:3128:botproxy:Xclip2026Proxy!"
 USE_PROXY = "true"
