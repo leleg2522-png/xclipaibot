@@ -269,7 +269,7 @@ Catatan:
   );
 });
 
-bot.onText(/\/login (.+)/, async (msg, match) => {
+bot.onText(/\/login(.*)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const session = getSession(msg);
 
@@ -278,9 +278,15 @@ bot.onText(/\/login (.+)/, async (msg, match) => {
     return;
   }
 
-  const args = match[1].trim().split(/\s+/);
+  const input = (match[1] || "").trim();
+  if (!input) {
+    bot.sendMessage(chatId, "Format: /login username password\n\nContoh: /login johndoe password123");
+    return;
+  }
+
+  const args = input.split(/\s+/);
   if (args.length < 2) {
-    bot.sendMessage(chatId, "Format: /login username password");
+    bot.sendMessage(chatId, "Format: /login username password\n\nContoh: /login johndoe password123");
     return;
   }
 
