@@ -202,10 +202,10 @@ async function authenticateUser(loginInput, password) {
   }
 }
 
-async function checkMotionSubscription(userId) {
+async function checkSubscription(userId) {
   if (!db) return { active: false, reason: "Database tidak tersedia." };
   try {
-    const result = await db.query(
+    const motionResult = await db.query(
       `SELECT ms.id, ms.expired_at, ms.is_active, mr.name as room_name
        FROM motion_subscriptions ms
        LEFT JOIN motion_rooms mr ON ms.motion_room_id = mr.id
@@ -213,15 +213,33 @@ async function checkMotionSubscription(userId) {
        ORDER BY ms.expired_at DESC LIMIT 1`,
       [userId]
     );
-    if (result.rows.length === 0) {
-      return { active: false, reason: "Kamu belum punya langganan Motion Control yang aktif." };
+    if (motionResult.rows.length > 0) {
+      const sub = motionResult.rows[0];
+      return {
+        active: true,
+        expiredAt: sub.expired_at,
+        planName: sub.room_name || "Motion Control",
+      };
     }
-    const sub = result.rows[0];
-    return {
-      active: true,
-      expiredAt: sub.expired_at,
-      roomName: sub.room_name,
-    };
+
+    const subResult = await db.query(
+      `SELECT s.id, s.expired_at, s.status, sp.name as plan_name
+       FROM subscriptions s
+       LEFT JOIN subscription_plans sp ON s.plan_id = sp.id
+       WHERE s.user_id = $1 AND s.status = 'active' AND s.expired_at > NOW()
+       ORDER BY s.expired_at DESC LIMIT 1`,
+      [userId]
+    );
+    if (subResult.rows.length > 0) {
+      const sub = subResult.rows[0];
+      return {
+        active: true,
+        expiredAt: sub.expired_at,
+        planName: sub.plan_name || "xclip Premium",
+      };
+    }
+
+    return { active: false, reason: "Kamu belum punya langganan aktif. Hubungi admin untuk berlangganan." };
   } catch (err) {
     console.error("Subscription check error:", err.message);
     return { active: false, reason: "Gagal mengecek langganan." };
@@ -311,7 +329,7 @@ async function processLogin(chatId, msg, session, loginInput, password) {
       return;
     }
 
-    const subResult = await checkMotionSubscription(authResult.userId);
+    const subResult = await checkSubscription(authResult.userId);
 
     session.loggedIn = true;
     session.userId = authResult.userId;
@@ -325,12 +343,12 @@ async function processLogin(chatId, msg, session, loginInput, password) {
       });
       bot.sendMessage(
         chatId,
-        `Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan Motion Control: Aktif\nRoom: ${subResult.roomName || "-"}\nBerlaku sampai: ${expDate}\n\nSilakan kirim foto dan video, lalu ketik /generate.`
+        `Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan: ${subResult.planName} (Aktif)\nBerlaku sampai: ${expDate}\n\nSilakan kirim foto dan video, lalu ketik /generate.`
       );
     } else {
       bot.sendMessage(
         chatId,
-        `Login berhasil! Selamat datang, ${authResult.username}.\n\n⚠️ ${subResult.reason}\nHubungi admin untuk berlangganan Motion Control.`
+        `Login berhasil! Selamat datang, ${authResult.username}.\n\n⚠️ ${subResult.reason}`
       );
     }
   } catch (err) {
@@ -368,12 +386,12 @@ bot.onText(/\/status/, async (msg) => {
   ];
 
   if (session.loggedIn) {
-    const subResult = await checkMotionSubscription(session.userId);
+    const subResult = await checkSubscription(session.userId);
     if (subResult.active) {
       const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
         day: "numeric", month: "long", year: "numeric",
       });
-      lines.push(`Langganan: Aktif (s/d ${expDate})`);
+      lines.push(`Langganan: Aktif - ${subResult.planName} (s/d ${expDate})`);
     } else {
       lines.push(`Langganan: Tidak aktif`);
     }
@@ -625,9 +643,9 @@ bot.onText(/\/generate/, async (msg) => {
     return;
   }
 
-  const subResult = await checkMotionSubscription(session.userId);
+  const subResult = await checkSubscription(session.userId);
   if (!subResult.active) {
-    bot.sendMessage(chatId, `⚠️ ${subResult.reason}\nHubungi admin untuk berlangganan.`);
+    bot.sendMessage(chatId, `⚠️ ${subResult.reason}`);
     return;
   }
 
