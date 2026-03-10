@@ -173,6 +173,8 @@ function getSession(msg) {
       loggedIn: false,
       userId: null,
       username: null,
+      loginStep: null,
+      loginEmail: null,
     };
   }
   return userSessions[key];
@@ -271,7 +273,7 @@ Catatan:
 
 bot.onText(/\/login(.*)/, async (msg, match) => {
   const chatId = msg.chat.id;
-  console.log(`/login command received from chat ${chatId}, user ${msg.from.id}`);
+  console.log(`/login command received from chat ${chatId}`);
   const session = getSession(msg);
 
   if (session.loggedIn) {
@@ -280,33 +282,32 @@ bot.onText(/\/login(.*)/, async (msg, match) => {
   }
 
   const input = (match[1] || "").trim();
-  console.log(`Login input: "${input}" (length: ${input.length})`);
-  if (!input) {
-    bot.sendMessage(chatId, "Format: /login email password\n\nContoh: /login user@gmail.com password123");
-    return;
+
+  if (input) {
+    const args = input.split(/\s+/);
+    if (args.length >= 2) {
+      const [loginInput, password] = args;
+      try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+      await processLogin(chatId, msg, session, loginInput, password);
+      return;
+    }
   }
 
-  const args = input.split(/\s+/);
-  if (args.length < 2) {
-    bot.sendMessage(chatId, "Format: /login email password\n\nContoh: /login user@gmail.com password123");
-    return;
-  }
+  session.loginStep = "email";
+  session.loginEmail = null;
+  bot.sendMessage(chatId, "Masukkan email atau username kamu:");
+});
 
-  const [loginInput, password] = args;
-  console.log(`Attempting login for: ${loginInput}`);
-
+async function processLogin(chatId, msg, session, loginInput, password) {
   try {
-    await bot.deleteMessage(chatId, msg.message_id);
-  } catch (e) {
-    console.log("Could not delete login message:", e.message);
-  }
-
-  try {
+    console.log(`Attempting login for: ${loginInput}`);
     const authResult = await authenticateUser(loginInput, password);
-    console.log(`Auth result: ${JSON.stringify({ success: authResult.success, userId: authResult.userId })}`);
+    console.log(`Auth result: success=${authResult.success}`);
 
     if (!authResult.success) {
-      bot.sendMessage(chatId, "Login gagal: Username/email atau password salah.");
+      bot.sendMessage(chatId, "Login gagal: Email/username atau password salah.");
+      session.loginStep = null;
+      session.loginEmail = null;
       return;
     }
 
@@ -315,6 +316,8 @@ bot.onText(/\/login(.*)/, async (msg, match) => {
     session.loggedIn = true;
     session.userId = authResult.userId;
     session.username = authResult.username;
+    session.loginStep = null;
+    session.loginEmail = null;
 
     if (subResult.active) {
       const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
@@ -331,10 +334,12 @@ bot.onText(/\/login(.*)/, async (msg, match) => {
       );
     }
   } catch (err) {
-    console.error("Login handler error:", err);
+    console.error("Login error:", err);
     bot.sendMessage(chatId, "Terjadi kesalahan saat login. Coba lagi nanti.");
+    session.loginStep = null;
+    session.loginEmail = null;
   }
-});
+}
 
 bot.onText(/\/logout/, (msg) => {
   const chatId = msg.chat.id;
@@ -383,6 +388,28 @@ bot.onText(/\/status/, async (msg) => {
     `Generating: ${session.isGenerating ? "Ya" : "Tidak"}`,
   );
   bot.sendMessage(msg.chat.id, lines.join("\n"));
+});
+
+bot.on("text", async (msg) => {
+  if (msg.text && msg.text.startsWith("/")) return;
+  const chatId = msg.chat.id;
+  const session = getSession(msg);
+
+  if (!session.loginStep) return;
+
+  if (session.loginStep === "email") {
+    session.loginEmail = msg.text.trim();
+    session.loginStep = "password";
+    bot.sendMessage(chatId, "Masukkan password kamu:");
+    return;
+  }
+
+  if (session.loginStep === "password") {
+    const password = msg.text.trim();
+    try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+    await processLogin(chatId, msg, session, session.loginEmail, password);
+    return;
+  }
 });
 
 bot.onText(/\/prompt (.+)/, (msg, match) => {
