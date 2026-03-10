@@ -768,26 +768,18 @@ bot.on("callback_query", async (query) => {
       if (videoUrls.length > 0) {
         for (const videoUrl of videoUrls) {
           try {
-            console.log("Attempting sendVideo:", videoUrl.substring(0, 80));
-            await bot.sendVideo(chatId, videoUrl, {
+            console.log("Downloading video:", videoUrl.substring(0, 80));
+            const videoResponse = await axios.get(videoUrl, { responseType: "arraybuffer" });
+            const tempPath = path.join(UPLOAD_DIR, `result_${Date.now()}.mp4`);
+            fs.writeFileSync(tempPath, videoResponse.data);
+            await bot.sendVideo(chatId, tempPath, {
               caption: `Motion control video selesai! (${qualityLabel})`,
             });
+            cleanupFile(tempPath);
             console.log("sendVideo success");
           } catch (sendErr) {
             console.error("sendVideo failed:", sendErr.message);
-            try {
-              const videoResponse = await axios.get(videoUrl, { responseType: "arraybuffer" });
-              const tempPath = path.join(UPLOAD_DIR, `result_${Date.now()}.mp4`);
-              fs.writeFileSync(tempPath, videoResponse.data);
-              await bot.sendVideo(chatId, tempPath, {
-                caption: `Motion control video selesai! (${qualityLabel})`,
-              });
-              cleanupFile(tempPath);
-              console.log("sendVideo via download success");
-            } catch (dlErr) {
-              console.error("Download+send failed:", dlErr.message);
-              await bot.sendMessage(chatId, `Video selesai! Download di sini:\n${videoUrl}`);
-            }
+            await bot.sendMessage(chatId, `Video selesai! Download di sini:\n${videoUrl}`);
           }
         }
       } else {
