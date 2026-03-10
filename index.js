@@ -498,6 +498,10 @@ bot.on("video", async (msg) => {
   const session = getSession(msg);
 
   try {
+    if (msg.video.file_size && msg.video.file_size > 20 * 1024 * 1024) {
+      bot.sendMessage(chatId, "Video terlalu besar (max 20MB). Kompres dulu atau kirim video yang lebih kecil.");
+      return;
+    }
     cleanupFile(session.videoFile?.localPath);
     session.videoFile = await downloadTelegramFile(msg.video.file_id);
 
@@ -510,7 +514,11 @@ bot.on("video", async (msg) => {
     bot.sendMessage(chatId, reply);
   } catch (err) {
     console.error("Error processing video:", err.message);
-    bot.sendMessage(chatId, "Gagal memproses video. Coba kirim ulang.");
+    if (err.message.includes("file is too big")) {
+      bot.sendMessage(chatId, "Video terlalu besar (max 20MB). Kompres dulu atau kirim video yang lebih kecil.");
+    } else {
+      bot.sendMessage(chatId, "Gagal memproses video. Coba kirim ulang.");
+    }
   }
 });
 
