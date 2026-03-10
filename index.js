@@ -240,33 +240,32 @@ bot.onText(/\/start/, (msg) => {
   resetSession(msg);
   bot.sendMessage(
     msg.chat.id,
-    `🎬 *Kling 2.6 Motion Control Bot*
+`🎬 Kling 2.6 Motion Control Bot
 
-Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Freepik Kling 2\\.6 Motion Control API\\.
+Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Freepik Kling 2.6 Motion Control API.
 
-*Cara pakai:*
+Cara pakai:
 1️⃣ Login dulu: /login username password
 2️⃣ Kirim foto karakter
 3️⃣ Kirim video referensi gerakan
 4️⃣ Ketik /generate untuk mulai
 
-*Perintah:*
-/start \\- Mulai ulang
-/login \\- Login dengan akun xclip
-/logout \\- Logout
-/generate \\- Generate video
-/prompt \\[teks\\] \\- Set prompt tambahan
-/orientation \\[video|image\\] \\- Set orientasi karakter
-/quality \\[std|pro\\] \\- Set kualitas \\(std \\= 720p, pro \\= 1080p\\)
-/status \\- Cek status session saat ini
-/reset \\- Reset session
+Perintah:
+/start - Mulai ulang
+/login - Login dengan akun xclip
+/logout - Logout
+/generate - Generate video
+/prompt [teks] - Set prompt tambahan
+/orientation [video|image] - Set orientasi karakter
+/quality [std|pro] - Set kualitas (std = 720p, pro = 1080p)
+/status - Cek status session saat ini
+/reset - Reset session
 
-*Catatan:*
+Catatan:
 • Harus login dan punya langganan Motion aktif
-• Foto: min 300x300px, max 10MB \\(JPG/PNG/WEBP\\)
-• Video: durasi 3\\-30 detik, max 100MB \\(MP4/MOV/WEBM\\)
-• Orientasi "video" \\= max 30 detik, "image" \\= max 10 detik`,
-    { parse_mode: "MarkdownV2" }
+• Foto: min 300x300px, max 10MB (JPG/PNG/WEBP)
+• Video: durasi 3-30 detik, max 100MB (MP4/MOV/WEBM)
+• Orientasi "video" = max 30 detik, "image" = max 10 detik`
   );
 });
 
