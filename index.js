@@ -5,7 +5,6 @@ const path = require("path");
 const crypto = require("crypto");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const FREEPIK_API_KEY = process.env.FREEPIK_API_KEY;
 const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.REPLIT_DEV_DOMAIN;
 
 if (!TELEGRAM_TOKEN) {
@@ -13,9 +12,42 @@ if (!TELEGRAM_TOKEN) {
   process.exit(1);
 }
 
-if (!FREEPIK_API_KEY) {
-  console.error("FREEPIK_API_KEY is not set");
+const RAW_KEYS = process.env.FREEPIK_API_KEY || "";
+const API_KEYS = RAW_KEYS.split(",").map((k) => k.trim()).filter(Boolean);
+
+if (API_KEYS.length === 0) {
+  console.error("FREEPIK_API_KEY is not set (provide one or more keys separated by commas)");
   process.exit(1);
+}
+
+console.log(`Loaded ${API_KEYS.length} Freepik API key(s)`);
+
+let keyIndex = 0;
+const keyFailures = {};
+
+function getNextApiKey() {
+  const now = Date.now();
+  for (let i = 0; i < API_KEYS.length; i++) {
+    const idx = (keyIndex + i) % API_KEYS.length;
+    const key = API_KEYS[idx];
+    const failure = keyFailures[key];
+    if (failure && failure.until > now) {
+      continue;
+    }
+    keyIndex = (idx + 1) % API_KEYS.length;
+    return key;
+  }
+  keyIndex = (keyIndex + 1) % API_KEYS.length;
+  return API_KEYS[keyIndex];
+}
+
+function markKeyFailed(key, cooldownMs = 60000) {
+  keyFailures[key] = { until: Date.now() + cooldownMs };
+  console.log(`API key ...${key.slice(-6)} cooldown for ${cooldownMs / 1000}s`);
+}
+
+function markKeyOk(key) {
+  delete keyFailures[key];
 }
 
 const UPLOAD_DIR = path.join(__dirname, "uploads");
@@ -288,22 +320,34 @@ async function submitMotionControl(session) {
     body.prompt = session.prompt;
   }
 
-  const response = await axios.post(endpoint, body, {
-    headers: {
-      "Content-Type": "application/json",
-      "x-freepik-api-key": FREEPIK_API_KEY,
-    },
-  });
+  const apiKey = getNextApiKey();
+  console.log(`Using API key ...${apiKey.slice(-6)} for submit`);
 
-  return response.data;
+  try {
+    const response = await axios.post(endpoint, body, {
+      headers: {
+        "Content-Type": "application/json",
+        "x-freepik-api-key": apiKey,
+      },
+    });
+    markKeyOk(apiKey);
+    session.apiKey = apiKey;
+    return response.data;
+  } catch (err) {
+    if (err.response?.status === 429 || err.response?.status === 403) {
+      markKeyFailed(apiKey, 120000);
+    }
+    throw err;
+  }
 }
 
-async function checkTaskStatus(taskId) {
+async function checkTaskStatus(taskId, apiKey) {
   const url = `https://api.freepik.com/v1/ai/image-to-video/kling-v2-6/${taskId}`;
+  const key = apiKey || getNextApiKey();
 
   const response = await axios.get(url, {
     headers: {
-      "x-freepik-api-key": FREEPIK_API_KEY,
+      "x-freepik-api-key": key,
     },
   });
 
