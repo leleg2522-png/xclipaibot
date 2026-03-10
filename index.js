@@ -348,6 +348,9 @@ async function submitMotionControl(session) {
     body.prompt = session.prompt;
   }
 
+  console.log(`Submit image_url: ${body.image_url}`);
+  console.log(`Submit video_url: ${body.video_url}`);
+
   const apiKey = getNextApiKey();
   console.log(`Using API key ...${apiKey.slice(-6)} for submit`);
 
