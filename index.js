@@ -6,7 +6,7 @@ const crypto = require("crypto");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const FREEPIK_API_KEY = process.env.FREEPIK_API_KEY;
-const REPLIT_DEV_DOMAIN = process.env.REPLIT_DEV_DOMAIN;
+const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.REPLIT_DEV_DOMAIN;
 
 if (!TELEGRAM_TOKEN) {
   console.error("TELEGRAM_BOT_TOKEN is not set");
@@ -25,17 +25,21 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 
 const express = require("express");
 const app = express();
-const FILE_SERVER_PORT = 3000;
+const FILE_SERVER_PORT = process.env.PORT || 3000;
 
 app.use("/files", express.static(UPLOAD_DIR));
+
+app.get("/", (req, res) => {
+  res.json({ status: "ok", bot: "Kling 2.6 Motion Control" });
+});
 
 app.listen(FILE_SERVER_PORT, "0.0.0.0", () => {
   console.log(`File server running on port ${FILE_SERVER_PORT}`);
 });
 
 function getPublicFileUrl(filename) {
-  if (REPLIT_DEV_DOMAIN) {
-    return `https://${REPLIT_DEV_DOMAIN}/files/${filename}`;
+  if (PUBLIC_DOMAIN) {
+    return `https://${PUBLIC_DOMAIN}/files/${filename}`;
   }
   return `http://localhost:${FILE_SERVER_PORT}/files/${filename}`;
 }

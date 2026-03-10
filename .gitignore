@@ -131,3 +131,6 @@ dist
 
 # Replit debugger
 .breakpoints
+
+# Uploaded files
+uploads/
