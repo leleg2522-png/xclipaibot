@@ -737,10 +737,9 @@ async function pollForResult(chatId, taskId, apiKey) {
   let totalWaitMs = 0;
 
   function getInterval(attempt) {
-    if (attempt < 3) return 3000;
-    if (attempt < 10) return 5000;
-    if (attempt < 20) return 10000;
-    return 15000;
+    if (attempt < 5) return 10000;
+    if (attempt < 15) return 15000;
+    return 20000;
   }
 
   for (let i = 0; i < maxAttempts; i++) {
