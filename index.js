@@ -738,8 +738,8 @@ async function checkTaskStatus(taskId, apiKey, stickyProxy) {
 async function pollForResult(chatId, taskId, apiKey) {
   const maxAttempts = 80;
 
-  const stickyProxy = getNextProxy();
-  console.log(`Task ${taskId} polling via proxy: ${stickyProxy ? stickyProxy.replace(/:[^:@]+@/, ":***@") : "direct"}`);
+  let currentProxy = getNextProxy();
+  console.log(`Task ${taskId} polling via proxy: ${currentProxy ? currentProxy.replace(/:[^:@]+@/, ":***@") : "direct"}`);
 
   let consecutiveErrors = 0;
   let totalWaitMs = 0;
@@ -750,17 +750,29 @@ async function pollForResult(chatId, taskId, apiKey) {
     return 20000;
   }
 
+  function switchProxy() {
+    if (currentProxy) markProxyFailed(currentProxy, 240000);
+    const newProxy = getNextProxy();
+    if (newProxy && newProxy !== currentProxy) {
+      currentProxy = newProxy;
+      console.log(`Switched to proxy: ${currentProxy.replace(/:[^:@]+@/, ":***@")}`);
+    } else {
+      currentProxy = null;
+      console.log("No available proxy, polling direct");
+    }
+  }
+
   for (let i = 0; i < maxAttempts; i++) {
     const intervalMs = getInterval(i) + Math.floor(Math.random() * 1000);
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     totalWaitMs += intervalMs;
 
     try {
-      const result = await checkTaskStatus(taskId, apiKey, stickyProxy);
+      const result = await checkTaskStatus(taskId, apiKey, currentProxy);
       const status = result?.data?.status;
       console.log(`Poll #${i + 1} for task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s elapsed)`);
       consecutiveErrors = 0;
-      if (stickyProxy) markProxyOk(stickyProxy);
+      if (currentProxy) markProxyOk(currentProxy);
 
       if (status === "COMPLETED") {
         console.log("Task completed! Generated URLs:", JSON.stringify(result?.data?.generated));
@@ -781,14 +793,17 @@ async function pollForResult(chatId, taskId, apiKey) {
       consecutiveErrors++;
 
       if (status === 403) {
-        if (stickyProxy) markProxyFailed(stickyProxy, 240000);
-        console.log("Status check forbidden, retrying...");
+        console.log(`Proxy banned, switching to next proxy...`);
+        switchProxy();
+        consecutiveErrors = 0;
         continue;
       }
 
       if (consecutiveErrors >= 5) {
-        bot.sendMessage(chatId, "Terlalu banyak error berturut-turut. Silakan coba /generate lagi.");
-        return null;
+        console.log("5 consecutive errors, switching proxy...");
+        switchProxy();
+        consecutiveErrors = 0;
+        continue;
       }
     }
   }
