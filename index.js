@@ -857,26 +857,46 @@ bot.on("callback_query", async (query) => {
     const status = result?.data?.status;
 
     if (status === "COMPLETED") {
-      const videoUrls = result?.data?.generated || [];
-      console.log("Sending video results:", videoUrls.length, "URLs");
+      const generated = result?.data?.generated || [];
+      console.log("Sending video results:", JSON.stringify(generated));
+
+      const videoUrls = generated.map((item) => {
+        if (typeof item === "string") return item;
+        return item?.video || item?.url || item?.src || null;
+      }).filter(Boolean);
+
+      console.log("Extracted video URLs:", videoUrls);
+
       if (videoUrls.length > 0) {
         for (const videoUrl of videoUrls) {
           try {
-            console.log("Downloading video:", videoUrl.substring(0, 80));
-            const videoResponse = await axios.get(videoUrl, { responseType: "arraybuffer" });
+            console.log("Downloading video:", videoUrl.substring(0, 120));
+            const videoResponse = await axios.get(videoUrl, {
+              responseType: "arraybuffer",
+              timeout: 120000,
+            });
             const tempPath = path.join(UPLOAD_DIR, `result_${Date.now()}.mp4`);
             fs.writeFileSync(tempPath, videoResponse.data);
-            await bot.sendVideo(chatId, tempPath, {
-              caption: `Motion control video selesai! (${qualityLabel})`,
-            });
-            cleanupFile(tempPath);
-            console.log("sendVideo success");
+            const fileSizeMB = fs.statSync(tempPath).size / (1024 * 1024);
+            console.log(`Video downloaded: ${fileSizeMB.toFixed(2)} MB`);
+
+            if (fileSizeMB > 50) {
+              await bot.sendMessage(chatId, `Video terlalu besar untuk Telegram (${fileSizeMB.toFixed(1)}MB). Download di sini:\n${videoUrl}`);
+              cleanupFile(tempPath);
+            } else {
+              await bot.sendVideo(chatId, tempPath, {
+                caption: `Motion control video selesai! (${qualityLabel})`,
+              });
+              cleanupFile(tempPath);
+              console.log("sendVideo success");
+            }
           } catch (sendErr) {
             console.error("sendVideo failed:", sendErr.message);
             await bot.sendMessage(chatId, `Video selesai! Download di sini:\n${videoUrl}`);
           }
         }
       } else {
+        console.log("No video URLs found in generated data:", JSON.stringify(generated));
         bot.sendMessage(chatId, "Video selesai tapi tidak ada URL hasil.");
       }
     } else {
