@@ -711,16 +711,15 @@ async function submitMotionControl(session) {
   throw new Error("Semua API key dan proxy tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey, stickyProxy) {
+async function checkTaskStatus(taskId, apiKey) {
   const url = `https://api.freepik.com/v1/ai/image-to-video/kling-v2-6/${taskId}`;
   const key = apiKey || getNextApiKey();
 
-  const proxyConfig = stickyProxy ? getStickyProxyAgent(stickyProxy) : getProxyAgent();
   const response = await axios.get(url, {
     headers: {
       "x-freepik-api-key": key,
     },
-    ...proxyConfig,
+    timeout: 15000,
   });
 
   return response.data;
@@ -729,30 +728,28 @@ async function checkTaskStatus(taskId, apiKey, stickyProxy) {
 async function pollForResult(chatId, taskId, apiKey) {
   const maxAttempts = 80;
 
-  const stickyProxy = getNextProxy();
-  console.log(`Task ${taskId} assigned to proxy: ${stickyProxy ? stickyProxy.replace(/:[^:@]+@/, ":***@") : "direct"}`);
+  console.log(`Task ${taskId} polling started (direct, no proxy)`);
 
   let consecutiveErrors = 0;
   let totalWaitMs = 0;
 
   function getInterval(attempt) {
-    if (attempt < 6) return 5000;
-    if (attempt < 15) return 10000;
-    if (attempt < 30) return 15000;
-    return 20000;
+    if (attempt < 3) return 3000;
+    if (attempt < 10) return 5000;
+    if (attempt < 20) return 10000;
+    return 15000;
   }
 
   for (let i = 0; i < maxAttempts; i++) {
-    const intervalMs = getInterval(i) + Math.floor(Math.random() * 2000);
+    const intervalMs = getInterval(i) + Math.floor(Math.random() * 1000);
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     totalWaitMs += intervalMs;
 
     try {
-      const result = await checkTaskStatus(taskId, apiKey, stickyProxy);
+      const result = await checkTaskStatus(taskId, apiKey);
       const status = result?.data?.status;
       console.log(`Poll #${i + 1} for task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s elapsed)`);
       consecutiveErrors = 0;
-      if (stickyProxy) markProxyOk(stickyProxy);
 
       if (status === "COMPLETED") {
         console.log("Task completed! Generated URLs:", JSON.stringify(result?.data?.generated));
@@ -772,10 +769,9 @@ async function pollForResult(chatId, taskId, apiKey) {
       console.error(`Poll attempt ${i + 1} error:`, status, err.response?.data || err.message);
       consecutiveErrors++;
 
-      if (status === 403 && msg.includes("blocked")) {
-        if (stickyProxy) markProxyFailed(stickyProxy, 240000);
-        bot.sendMessage(chatId, "Proxy kena blokir, task ini gagal. Silakan coba /generate lagi.");
-        return null;
+      if (status === 403) {
+        console.log("Status check forbidden, retrying...");
+        continue;
       }
 
       if (consecutiveErrors >= 5) {
