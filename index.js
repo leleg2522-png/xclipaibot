@@ -44,7 +44,7 @@ const PROXIES = RAW_PROXIES.split(",").map((p) => p.trim()).filter(Boolean).map(
   const parts = p.split(":");
   if (parts.length === 4) {
     const [host, port, user, pass] = parts;
-    return `http://${user}:${pass}@${host}:${port}`;
+    return `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}`;
   }
   return p;
 });
