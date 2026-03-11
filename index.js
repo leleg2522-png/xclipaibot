@@ -183,7 +183,22 @@ function cleanupFile(localPath) {
   }
 }
 
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+const bot = new TelegramBot(TELEGRAM_TOKEN, {
+  polling: {
+    autoStart: false,
+    params: { timeout: 30 },
+  },
+});
+
+(async () => {
+  try {
+    await bot.deleteWebHook({ drop_pending_updates: true });
+    console.log("Webhook cleared, starting polling...");
+  } catch (e) {
+    console.log("Clear webhook skipped:", e.message);
+  }
+  bot.startPolling();
+})();
 
 const userSessions = {};
 
