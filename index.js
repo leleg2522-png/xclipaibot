@@ -106,9 +106,14 @@ function getProxyAgent() {
   return { httpsAgent: agent, httpAgent: agent, proxy: false };
 }
 
-function markProxyFailed(proxyUrl, cooldownMs = 240000) {
-  proxyFailures[proxyUrl] = { until: Date.now() + cooldownMs };
-  console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} cooldown for ${cooldownMs / 1000}s`);
+function markProxyFailed(proxyUrl, cooldownMs = 240000, permanent = false) {
+  if (permanent) {
+    proxyFailures[proxyUrl] = { until: Infinity };
+    console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} BANNED permanently (until restart)`);
+  } else {
+    proxyFailures[proxyUrl] = { until: Date.now() + cooldownMs };
+    console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} cooldown for ${cooldownMs / 1000}s`);
+  }
 }
 
 function markProxyOk(proxyUrl) {
@@ -681,7 +686,7 @@ async function submitMotionControl(session) {
         lastError = err;
 
         if (status === 403 && msg.includes("blocked")) {
-          if (proxyUrl) markProxyFailed(proxyUrl, 240000);
+          if (proxyUrl) markProxyFailed(proxyUrl, 0, true);
           console.log(`Submit blocked on proxy, trying next proxy...`);
           continue;
         }
@@ -751,7 +756,7 @@ async function pollForResult(chatId, taskId, apiKey) {
   }
 
   function switchProxy() {
-    if (currentProxy) markProxyFailed(currentProxy, 240000);
+    if (currentProxy) markProxyFailed(currentProxy, 0, true);
     const newProxy = getNextProxy();
     if (newProxy && newProxy !== currentProxy) {
       currentProxy = newProxy;
