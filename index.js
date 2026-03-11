@@ -642,40 +642,73 @@ async function submitMotionControl(session) {
   console.log(`Submit image_url: ${body.image_url}`);
   console.log(`Submit video_url: ${body.video_url}`);
 
-  const apiKey = getNextApiKey();
-  console.log(`Using API key ...${apiKey.slice(-6)} for submit`);
+  const triedKeys = new Set();
+  let lastError = null;
 
-  const maxRetries = PROXIES.length + 1;
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const proxyUrl = getNextProxy();
-    try {
-      const response = await axios.post(endpoint, body, {
-        headers: {
-          "Content-Type": "application/json",
-          "x-freepik-api-key": apiKey,
-        },
-        ...getStickyProxyAgent(proxyUrl),
-      });
-      markKeyOk(apiKey);
-      if (proxyUrl) markProxyOk(proxyUrl);
-      session.apiKey = apiKey;
-      session.submitProxy = proxyUrl;
-      return response.data;
-    } catch (err) {
-      const status = err.response?.status;
-      const msg = err.response?.data?.message || err.message;
-      if (status === 403 && msg.includes("blocked")) {
-        if (proxyUrl) markProxyFailed(proxyUrl, 240000);
-        console.log(`Submit blocked on proxy, trying next...`);
-        continue;
+  for (let keyAttempt = 0; keyAttempt < API_KEYS.length; keyAttempt++) {
+    const apiKey = getNextApiKey();
+    if (triedKeys.has(apiKey)) continue;
+    triedKeys.add(apiKey);
+    console.log(`Using API key ...${apiKey.slice(-6)} for submit (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
+
+    const maxProxyRetries = Math.min(PROXIES.length + 1, 5);
+    for (let attempt = 0; attempt < maxProxyRetries; attempt++) {
+      const proxyUrl = getNextProxy();
+      try {
+        const response = await axios.post(endpoint, body, {
+          headers: {
+            "Content-Type": "application/json",
+            "x-freepik-api-key": apiKey,
+          },
+          ...getStickyProxyAgent(proxyUrl),
+        });
+        markKeyOk(apiKey);
+        if (proxyUrl) markProxyOk(proxyUrl);
+        session.apiKey = apiKey;
+        session.submitProxy = proxyUrl;
+        return response.data;
+      } catch (err) {
+        const status = err.response?.status;
+        const msg = err.response?.data?.message || err.message;
+        lastError = err;
+
+        if (status === 403 && msg.includes("blocked")) {
+          if (proxyUrl) markProxyFailed(proxyUrl, 240000);
+          console.log(`Submit blocked on proxy, trying next proxy...`);
+          continue;
+        }
+
+        if (status === 429) {
+          markKeyFailed(apiKey, 300000);
+          console.log(`API key ...${apiKey.slice(-6)} rate limited (429), cooldown 5min, trying next key...`);
+          break;
+        }
+
+        if (status === 403) {
+          markKeyFailed(apiKey, 600000);
+          console.log(`API key ...${apiKey.slice(-6)} forbidden (403), cooldown 10min, trying next key...`);
+          break;
+        }
+
+        if (status === 401) {
+          markKeyFailed(apiKey, 86400000);
+          console.log(`API key ...${apiKey.slice(-6)} invalid/expired (401), disabled 24h, trying next key...`);
+          break;
+        }
+
+        if (status === 402) {
+          markKeyFailed(apiKey, 86400000);
+          console.log(`API key ...${apiKey.slice(-6)} quota habis (402), disabled 24h, trying next key...`);
+          break;
+        }
+
+        throw err;
       }
-      if (status === 429 || status === 403) {
-        markKeyFailed(apiKey, 120000);
-      }
-      throw err;
     }
   }
-  throw new Error("Semua proxy kena blokir. Coba lagi nanti.");
+
+  if (lastError) throw lastError;
+  throw new Error("Semua API key dan proxy tidak tersedia. Coba lagi nanti.");
 }
 
 async function checkTaskStatus(taskId, apiKey, stickyProxy) {
