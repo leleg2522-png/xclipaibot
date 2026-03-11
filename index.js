@@ -711,15 +711,17 @@ async function submitMotionControl(session) {
   throw new Error("Semua API key dan proxy tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey) {
+async function checkTaskStatus(taskId, apiKey, stickyProxy) {
   const url = `https://api.freepik.com/v1/ai/image-to-video/kling-v2-6/${taskId}`;
   const key = apiKey || getNextApiKey();
 
+  const proxyConfig = stickyProxy ? getStickyProxyAgent(stickyProxy) : {};
   const response = await axios.get(url, {
     headers: {
       "x-freepik-api-key": key,
     },
     timeout: 15000,
+    ...proxyConfig,
   });
 
   return response.data;
@@ -728,7 +730,8 @@ async function checkTaskStatus(taskId, apiKey) {
 async function pollForResult(chatId, taskId, apiKey) {
   const maxAttempts = 80;
 
-  console.log(`Task ${taskId} polling started (direct, no proxy)`);
+  const stickyProxy = getNextProxy();
+  console.log(`Task ${taskId} polling via proxy: ${stickyProxy ? stickyProxy.replace(/:[^:@]+@/, ":***@") : "direct"}`);
 
   let consecutiveErrors = 0;
   let totalWaitMs = 0;
@@ -746,10 +749,11 @@ async function pollForResult(chatId, taskId, apiKey) {
     totalWaitMs += intervalMs;
 
     try {
-      const result = await checkTaskStatus(taskId, apiKey);
+      const result = await checkTaskStatus(taskId, apiKey, stickyProxy);
       const status = result?.data?.status;
       console.log(`Poll #${i + 1} for task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s elapsed)`);
       consecutiveErrors = 0;
+      if (stickyProxy) markProxyOk(stickyProxy);
 
       if (status === "COMPLETED") {
         console.log("Task completed! Generated URLs:", JSON.stringify(result?.data?.generated));
@@ -770,6 +774,7 @@ async function pollForResult(chatId, taskId, apiKey) {
       consecutiveErrors++;
 
       if (status === 403) {
+        if (stickyProxy) markProxyFailed(stickyProxy, 240000);
         console.log("Status check forbidden, retrying...");
         continue;
       }
