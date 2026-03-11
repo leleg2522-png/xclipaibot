@@ -727,22 +727,30 @@ async function checkTaskStatus(taskId, apiKey, stickyProxy) {
 }
 
 async function pollForResult(chatId, taskId, apiKey) {
-  const maxAttempts = 60;
-  const baseIntervalMs = 20000;
+  const maxAttempts = 80;
 
   const stickyProxy = getNextProxy();
   console.log(`Task ${taskId} assigned to proxy: ${stickyProxy ? stickyProxy.replace(/:[^:@]+@/, ":***@") : "direct"}`);
 
   let consecutiveErrors = 0;
+  let totalWaitMs = 0;
+
+  function getInterval(attempt) {
+    if (attempt < 6) return 5000;
+    if (attempt < 15) return 10000;
+    if (attempt < 30) return 15000;
+    return 20000;
+  }
 
   for (let i = 0; i < maxAttempts; i++) {
-    const waitMs = randomJitter(baseIntervalMs);
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    const intervalMs = getInterval(i) + Math.floor(Math.random() * 2000);
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    totalWaitMs += intervalMs;
 
     try {
       const result = await checkTaskStatus(taskId, apiKey, stickyProxy);
       const status = result?.data?.status;
-      console.log(`Poll #${i + 1} for task ${taskId}: status=${status}`);
+      console.log(`Poll #${i + 1} for task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s elapsed)`);
       consecutiveErrors = 0;
       if (stickyProxy) markProxyOk(stickyProxy);
 
@@ -754,8 +762,8 @@ async function pollForResult(chatId, taskId, apiKey) {
         return result;
       }
 
-      if (i > 0 && i % 4 === 0) {
-        const elapsed = Math.round(((i + 1) * baseIntervalMs) / 1000);
+      if (i > 0 && i % 6 === 0) {
+        const elapsed = Math.round(totalWaitMs / 1000);
         bot.sendMessage(chatId, `Masih memproses... (${elapsed} detik)`);
       }
     } catch (err) {
