@@ -1,12 +1,12 @@
 entrypoint = "index.js"
-modules = ["nodejs-22"]
+modules = ["nodejs-20"]
 hidden = [".config", "package-lock.json"]
 
 [gitHubImport]
 requiredFiles = [".replit", "replit.nix", "package.json", "package-lock.json"]
 
 [nix]
-channel = "stable-24_11"
+channel = "stable-25_05"
 
 [deployment]
 run = ["node", "index.js"]
@@ -32,16 +32,17 @@ args = "Telegram Bot"
 name = "Telegram Bot"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "node index.js"
-
 [workflows.workflow.metadata]
 outputType = "console"
 
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node index.js"
+waitForPort = 3000
+
 [[ports]]
 localPort = 3000
-externalPort = 80
+externalPort = 3000
 
 [userenv]
 
