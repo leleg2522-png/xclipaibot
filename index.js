@@ -170,7 +170,9 @@ async function downloadTelegramFile(fileId) {
     writer.on("error", reject);
   });
 
-  return { filename, localPath, publicUrl: getPublicFileUrl(filename) };
+  const publicUrl = getPublicFileUrl(filename);
+  console.log(`File downloaded: ${filename}, publicUrl: ${publicUrl}, telegramUrl: ${telegramUrl.substring(0, 60)}...`);
+  return { filename, localPath, publicUrl, telegramUrl };
 }
 
 function cleanupFile(localPath) {
@@ -628,9 +630,15 @@ async function submitMotionControl(session) {
       ? "https://api.freepik.com/v1/ai/video/kling-v2-6-motion-control-pro"
       : "https://api.freepik.com/v1/ai/video/kling-v2-6-motion-control-std";
 
+  const imageUrl = session.imageFile.publicUrl;
+  const videoUrl = session.videoFile.publicUrl;
+
+  console.log(`Using image_url: ${imageUrl}`);
+  console.log(`Using video_url: ${videoUrl}`);
+
   const body = {
-    image_url: session.imageFile.publicUrl,
-    video_url: session.videoFile.publicUrl,
+    image_url: imageUrl,
+    video_url: videoUrl,
     character_orientation: session.orientation,
     cfg_scale: 0.5,
   };
@@ -875,7 +883,9 @@ bot.on("callback_query", async (query) => {
   try { await bot.editMessageText(`Kualitas dipilih: ${qualityLabel}\n\nMemulai generate motion control video...\nOrientasi: ${session.orientation}\nPrompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`, { chat_id: chatId, message_id: query.message.message_id }); } catch (e) {}
 
   try {
+    const submitStart = Date.now();
     const submitResult = await submitMotionControl(session);
+    const submitTime = ((Date.now() - submitStart) / 1000).toFixed(1);
     const taskId = submitResult?.data?.task_id;
 
     if (!taskId) {
@@ -885,9 +895,13 @@ bot.on("callback_query", async (query) => {
       return;
     }
 
-    bot.sendMessage(chatId, `Task berhasil disubmit!\nTask ID: ${taskId}\n\nMenunggu hasil...`);
+    console.log(`Task ${taskId} submitted in ${submitTime}s`);
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nTask ID: ${taskId}\n\nMenunggu hasil...`);
 
+    const pollStart = Date.now();
     const result = await pollForResult(chatId, taskId, session.apiKey);
+    const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
+    console.log(`Task ${taskId} polling finished in ${pollTime}s`);
 
     if (!result) {
       bot.sendMessage(chatId, "Timeout: Video belum selesai setelah 20 menit. Coba lagi nanti.");
