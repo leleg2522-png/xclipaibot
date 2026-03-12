@@ -223,14 +223,30 @@ const bot = new TelegramBot(TELEGRAM_TOKEN, {
 });
 
 (async () => {
-  try {
-    await bot.deleteWebHook({ drop_pending_updates: true });
-    console.log("Webhook cleared, starting polling...");
-  } catch (e) {
-    console.log("Clear webhook skipped:", e.message);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await bot.deleteWebHook({ drop_pending_updates: true });
+      console.log("Webhook cleared, starting polling...");
+      break;
+    } catch (e) {
+      console.log(`Clear webhook attempt ${attempt + 1} failed: ${e.message}`);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
   }
   bot.startPolling();
 })();
+
+process.once("SIGTERM", () => {
+  console.log("SIGTERM received, stopping bot...");
+  bot.stopPolling();
+  setTimeout(() => process.exit(0), 2000);
+});
+
+process.once("SIGINT", () => {
+  console.log("SIGINT received, stopping bot...");
+  bot.stopPolling();
+  setTimeout(() => process.exit(0), 2000);
+});
 
 const userSessions = {};
 
