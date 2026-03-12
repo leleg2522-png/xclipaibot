@@ -56,6 +56,8 @@ let keyIndex = 0;
 let proxyIndex = 0;
 const keyFailures = {};
 const proxyFailures = {};
+const proxyLastUsed = {};
+const PROXY_MIN_INTERVAL = 5000;
 
 function getNextApiKey() {
   const now = Date.now();
@@ -76,6 +78,9 @@ function getNextApiKey() {
 function getNextProxy() {
   if (PROXIES.length === 0) return null;
   const now = Date.now();
+  let bestProxy = null;
+  let oldestUsed = Infinity;
+
   for (let i = 0; i < PROXIES.length; i++) {
     const idx = (proxyIndex + i) % PROXIES.length;
     const proxy = PROXIES[idx];
@@ -83,11 +88,29 @@ function getNextProxy() {
     if (failure && failure.until > now) {
       continue;
     }
-    proxyIndex = (idx + 1) % PROXIES.length;
-    return proxy;
+    const lastUsed = proxyLastUsed[proxy] || 0;
+    if (lastUsed < oldestUsed) {
+      oldestUsed = lastUsed;
+      bestProxy = proxy;
+    }
   }
-  proxyIndex = (proxyIndex + 1) % PROXIES.length;
-  return PROXIES[proxyIndex];
+
+  if (bestProxy) {
+    proxyLastUsed[bestProxy] = now;
+    return bestProxy;
+  }
+
+  const soonestAvailable = PROXIES.reduce((best, proxy) => {
+    const failure = proxyFailures[proxy];
+    if (!failure) return best;
+    return (!best || failure.until < best.until) ? { proxy, until: failure.until } : best;
+  }, null);
+
+  if (soonestAvailable) {
+    console.log(`All proxies on cooldown. Next available in ${Math.round((soonestAvailable.until - now) / 1000)}s`);
+  }
+
+  return null;
 }
 
 function getStickyProxyAgent(proxyUrl) {
@@ -106,10 +129,12 @@ function getProxyAgent() {
   return { httpsAgent: agent, httpAgent: agent, proxy: false };
 }
 
-function markProxyFailed(proxyUrl, cooldownMs = 240000, permanent = false) {
-  if (permanent) {
-    proxyFailures[proxyUrl] = { until: Infinity };
-    console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} BANNED permanently (until restart)`);
+const PROXY_BAN_DURATION = 2 * 60 * 60 * 1000;
+
+function markProxyFailed(proxyUrl, cooldownMs = 240000, banned = false) {
+  if (banned) {
+    proxyFailures[proxyUrl] = { until: Date.now() + PROXY_BAN_DURATION };
+    console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} BLOCKED by Freepik, cooldown 2 hours`);
   } else {
     proxyFailures[proxyUrl] = { until: Date.now() + cooldownMs };
     console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} cooldown for ${cooldownMs / 1000}s`);
