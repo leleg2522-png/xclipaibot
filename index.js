@@ -31,7 +31,7 @@ if (!TELEGRAM_TOKEN) {
 }
 
 const RAW_KEYS = process.env.FREEPIK_API_KEY || "";
-const API_KEYS = RAW_KEYS.split(",").map((k) => k.trim()).filter(Boolean);
+const API_KEYS = RAW_KEYS.split(",").map((k) => k.trim().replace(/[^\x20-\x7E]/g, "")).filter(Boolean);
 
 if (API_KEYS.length === 0) {
   console.error("FREEPIK_API_KEY is not set (provide one or more keys separated by commas)");
