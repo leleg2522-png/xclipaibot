@@ -656,6 +656,7 @@ async function submitMotionControl(session) {
   console.log(`Submit video_url: ${body.video_url}`);
 
   const triedKeys = new Set();
+  const triedProxies = new Set();
   let lastError = null;
 
   for (let keyAttempt = 0; keyAttempt < API_KEYS.length; keyAttempt++) {
@@ -664,15 +665,24 @@ async function submitMotionControl(session) {
     triedKeys.add(apiKey);
     console.log(`Using API key ...${apiKey.slice(-6)} for submit (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
 
-    const maxProxyRetries = Math.min(PROXIES.length + 1, 5);
-    for (let attempt = 0; attempt < maxProxyRetries; attempt++) {
+    triedProxies.clear();
+    for (let attempt = 0; attempt < PROXIES.length + 1; attempt++) {
       const proxyUrl = getNextProxy();
+      if (!proxyUrl) {
+        console.log("No proxy available, trying direct...");
+      } else if (triedProxies.has(proxyUrl)) {
+        console.log("All proxies tried for this key, moving to next key...");
+        break;
+      }
+      if (proxyUrl) triedProxies.add(proxyUrl);
+
       try {
         const response = await axios.post(endpoint, body, {
           headers: {
             "Content-Type": "application/json",
             "x-freepik-api-key": apiKey,
           },
+          timeout: 30000,
           ...getStickyProxyAgent(proxyUrl),
         });
         markKeyOk(apiKey);
@@ -687,7 +697,7 @@ async function submitMotionControl(session) {
 
         if (status === 403 && msg.includes("blocked")) {
           if (proxyUrl) markProxyFailed(proxyUrl, 0, true);
-          console.log(`Submit blocked on proxy, trying next proxy...`);
+          console.log(`Proxy ${proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ":***@") : "direct"} BANNED, trying next...`);
           continue;
         }
 
