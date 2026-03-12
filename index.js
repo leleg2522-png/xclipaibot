@@ -263,6 +263,7 @@ function getSession(msg) {
       prompt: null,
       orientation: "video",
       quality: "std",
+      model: "v2.6",
       isGenerating: false,
       loggedIn: false,
       userId: null,
@@ -393,6 +394,7 @@ Perintah:
 /generate - Generate video
 /prompt [teks] - Set prompt tambahan
 /orientation [video|image] - Set orientasi karakter
+/model [v2.6|v3] - Pilih model (v2.6 atau v3)
 /quality [std|pro] - Set kualitas (std = 720p, pro = 1080p)
 /status - Cek status session saat ini
 /reset - Reset session
@@ -518,6 +520,7 @@ bot.onText(/\/status/, async (msg) => {
     `Video: ${session.videoFile ? "Sudah ada" : "Belum"}`,
     `Prompt: ${session.prompt || "(kosong)"}`,
     `Orientasi: ${session.orientation}`,
+    `Model: ${session.model === "v3" ? "Kling 3" : "Kling 2.6"}`,
     `Kualitas: ${session.quality}`,
     `Generating: ${session.isGenerating ? "Ya" : "Tidak"}`,
   );
@@ -556,6 +559,13 @@ bot.onText(/\/orientation (video|image)/, (msg, match) => {
   const session = getSession(msg);
   session.orientation = match[1];
   bot.sendMessage(msg.chat.id, `Orientasi diset: ${session.orientation}`);
+});
+
+bot.onText(/\/model (v2\.6|v3)/, (msg, match) => {
+  const session = getSession(msg);
+  session.model = match[1];
+  const label = match[1] === "v3" ? "Kling 3" : "Kling 2.6";
+  bot.sendMessage(msg.chat.id, `Model diset: ${label}`);
 });
 
 bot.onText(/\/quality (std|pro)/, (msg, match) => {
@@ -671,10 +681,11 @@ bot.on("document", async (msg) => {
 });
 
 async function submitMotionControl(session) {
+  const modelSlug = session.model === "v3" ? "kling-v3" : "kling-v2-6";
   const endpoint =
     session.quality === "pro"
-      ? "https://api.freepik.com/v1/ai/video/kling-v2-6-motion-control-pro"
-      : "https://api.freepik.com/v1/ai/video/kling-v2-6-motion-control-std";
+      ? `https://api.freepik.com/v1/ai/video/${modelSlug}-motion-control-pro`
+      : `https://api.freepik.com/v1/ai/video/${modelSlug}-motion-control-std`;
 
   const imageUrl = session.imageFile.publicUrl;
   const videoUrl = session.videoFile.publicUrl;
@@ -775,8 +786,11 @@ async function submitMotionControl(session) {
   throw new Error("Semua API key dan proxy tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey, stickyProxy) {
-  const url = `https://api.freepik.com/v1/ai/image-to-video/kling-v2-6/${taskId}`;
+async function checkTaskStatus(taskId, apiKey, stickyProxy, model) {
+  const statusBase = model === "v3"
+    ? "https://api.freepik.com/v1/ai/video/kling-v3-motion-control-std"
+    : "https://api.freepik.com/v1/ai/image-to-video/kling-v2-6";
+  const url = `${statusBase}/${taskId}`;
   const key = apiKey || getNextApiKey();
 
   const proxyConfig = stickyProxy ? getStickyProxyAgent(stickyProxy) : {};
@@ -791,7 +805,7 @@ async function checkTaskStatus(taskId, apiKey, stickyProxy) {
   return response.data;
 }
 
-async function pollForResult(chatId, taskId, apiKey) {
+async function pollForResult(chatId, taskId, apiKey, model) {
   const maxAttempts = 80;
 
   let currentProxy = getNextProxy();
@@ -824,7 +838,7 @@ async function pollForResult(chatId, taskId, apiKey) {
     totalWaitMs += intervalMs;
 
     try {
-      const result = await checkTaskStatus(taskId, apiKey, currentProxy);
+      const result = await checkTaskStatus(taskId, apiKey, currentProxy, model);
       const status = result?.data?.status;
       console.log(`Poll #${i + 1} for task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s elapsed)`);
       consecutiveErrors = 0;
@@ -907,12 +921,12 @@ bot.onText(/\/generate/, async (msg) => {
     return;
   }
 
-  bot.sendMessage(chatId, "Pilih kualitas video:", {
+  bot.sendMessage(chatId, "Pilih model Kling:", {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: "⚡ Standard (720p)", callback_data: "quality_std" },
-          { text: "🔥 Pro (1080p)", callback_data: "quality_pro" },
+          { text: "Kling 2.6", callback_data: "model_v2.6" },
+          { text: "Kling 3 (Baru!)", callback_data: "model_v3" },
         ],
       ],
     },
@@ -923,7 +937,7 @@ bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
 
-  if (!data.startsWith("quality_")) return;
+  if (!data.startsWith("model_") && !data.startsWith("quality_")) return;
 
   const msg = { chat: query.message.chat, from: query.from };
   const session = getSession(msg);
@@ -943,15 +957,38 @@ bot.on("callback_query", async (query) => {
     return;
   }
 
+  if (data.startsWith("model_")) {
+    const model = data === "model_v3" ? "v3" : "v2.6";
+    session.model = model;
+    const modelLabel = model === "v3" ? "Kling 3" : "Kling 2.6";
+    bot.answerCallbackQuery(query.id);
+    try {
+      await bot.editMessageText(`Model: ${modelLabel}\n\nPilih kualitas video:`, {
+        chat_id: chatId,
+        message_id: query.message.message_id,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "⚡ Standard (720p)", callback_data: "quality_std" },
+              { text: "🔥 Pro (1080p)", callback_data: "quality_pro" },
+            ],
+          ],
+        },
+      });
+    } catch (e) {}
+    return;
+  }
+
   const quality = data === "quality_pro" ? "pro" : "std";
   session.quality = quality;
   session.isGenerating = true;
   session.lastGenerateTime = Date.now();
 
+  const modelLabel = session.model === "v3" ? "Kling 3" : "Kling 2.6";
   const qualityLabel = quality === "pro" ? "Pro (1080p)" : "Standard (720p)";
 
   bot.answerCallbackQuery(query.id);
-  try { await bot.editMessageText(`Kualitas dipilih: ${qualityLabel}\n\nMemulai generate motion control video...\nOrientasi: ${session.orientation}\nPrompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`, { chat_id: chatId, message_id: query.message.message_id }); } catch (e) {}
+  try { await bot.editMessageText(`Model: ${modelLabel} | Kualitas: ${qualityLabel}\n\nMemulai generate motion control video...\nOrientasi: ${session.orientation}\nPrompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`, { chat_id: chatId, message_id: query.message.message_id }); } catch (e) {}
 
   try {
     const submitStart = Date.now();
@@ -970,7 +1007,7 @@ bot.on("callback_query", async (query) => {
     bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nTask ID: ${taskId}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
-    const result = await pollForResult(chatId, taskId, session.apiKey);
+    const result = await pollForResult(chatId, taskId, session.apiKey, session.model);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
     console.log(`Task ${taskId} polling finished in ${pollTime}s`);
 
@@ -1011,7 +1048,7 @@ bot.on("callback_query", async (query) => {
               cleanupFile(tempPath);
             } else {
               await bot.sendVideo(chatId, tempPath, {
-                caption: `Motion control video selesai! (${qualityLabel})`,
+                caption: `Motion control video selesai! (${modelLabel} - ${qualityLabel})`,
               });
               cleanupFile(tempPath);
               console.log("sendVideo success");
