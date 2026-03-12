@@ -786,10 +786,14 @@ async function submitMotionControl(session) {
   throw new Error("Semua API key dan proxy tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey, stickyProxy, model) {
-  const statusBase = model === "v3"
-    ? "https://api.freepik.com/v1/ai/video/kling-v3-motion-control-std"
-    : "https://api.freepik.com/v1/ai/image-to-video/kling-v2-6";
+async function checkTaskStatus(taskId, apiKey, stickyProxy, model, quality) {
+  let statusBase;
+  if (model === "v3") {
+    const q = quality === "pro" ? "pro" : "std";
+    statusBase = `https://api.freepik.com/v1/ai/video/kling-v3-motion-control-${q}`;
+  } else {
+    statusBase = "https://api.freepik.com/v1/ai/image-to-video/kling-v2-6";
+  }
   const url = `${statusBase}/${taskId}`;
   const key = apiKey || getNextApiKey();
 
@@ -805,7 +809,7 @@ async function checkTaskStatus(taskId, apiKey, stickyProxy, model) {
   return response.data;
 }
 
-async function pollForResult(chatId, taskId, apiKey, model) {
+async function pollForResult(chatId, taskId, apiKey, model, quality) {
   const maxAttempts = 80;
 
   let currentProxy = getNextProxy();
@@ -838,7 +842,7 @@ async function pollForResult(chatId, taskId, apiKey, model) {
     totalWaitMs += intervalMs;
 
     try {
-      const result = await checkTaskStatus(taskId, apiKey, currentProxy, model);
+      const result = await checkTaskStatus(taskId, apiKey, currentProxy, model, quality);
       const status = result?.data?.status;
       console.log(`Poll #${i + 1} for task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s elapsed)`);
       consecutiveErrors = 0;
@@ -1007,7 +1011,7 @@ bot.on("callback_query", async (query) => {
     bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nTask ID: ${taskId}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
-    const result = await pollForResult(chatId, taskId, session.apiKey, session.model);
+    const result = await pollForResult(chatId, taskId, session.apiKey, session.model, session.quality);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
     console.log(`Task ${taskId} polling finished in ${pollTime}s`);
 
