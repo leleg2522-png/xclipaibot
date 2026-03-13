@@ -1008,12 +1008,21 @@ bot.on("callback_query", async (query) => {
       }
 
       extractUrls(result?.result);
+      extractUrls(result?.results);
       extractUrls(result?.data);
       extractUrls(result?.output);
       if (result?.result_url) videoUrls.push(result.result_url);
       if (result?.video_url) videoUrls.push(result.video_url);
+      if (result?.url) videoUrls.push(result.url);
+      if (Array.isArray(result?.results)) {
+        for (const r of result.results) {
+          if (r?.url) videoUrls.push(r.url);
+          if (r?.video) videoUrls.push(r.video);
+          if (Array.isArray(r?.urls)) videoUrls.push(...r.urls);
+        }
+      }
 
-      const uniqueUrls = [...new Set(videoUrls)].filter(Boolean);
+      const uniqueUrls = [...new Set(videoUrls)].filter(u => u && !u.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i));
       console.log("[Glio] Extracted video URLs:", uniqueUrls);
 
       if (uniqueUrls.length > 0) {
