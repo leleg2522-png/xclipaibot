@@ -58,6 +58,7 @@ const keyFailures = {};
 const proxyFailures = {};
 const proxyLastUsed = {};
 const PROXY_MIN_INTERVAL = 5000;
+const lockedKeys = new Set();
 
 function getNextApiKey() {
   const now = Date.now();
@@ -65,14 +66,32 @@ function getNextApiKey() {
     const idx = (keyIndex + i) % API_KEYS.length;
     const key = API_KEYS[idx];
     const failure = keyFailures[key];
-    if (failure && failure.until > now) {
-      continue;
-    }
+    if (failure && failure.until > now) continue;
+    if (lockedKeys.has(key)) continue;
     keyIndex = (idx + 1) % API_KEYS.length;
+    return key;
+  }
+  for (let i = 0; i < API_KEYS.length; i++) {
+    const idx = (keyIndex + i) % API_KEYS.length;
+    const key = API_KEYS[idx];
+    const failure = keyFailures[key];
+    if (failure && failure.until > now) continue;
+    keyIndex = (idx + 1) % API_KEYS.length;
+    console.log(`All unlocked keys exhausted, reusing locked key ...${key.slice(-6)}`);
     return key;
   }
   keyIndex = (keyIndex + 1) % API_KEYS.length;
   return API_KEYS[keyIndex];
+}
+
+function lockKey(key) {
+  lockedKeys.add(key);
+  console.log(`Key ...${key.slice(-6)} LOCKED for active task (${lockedKeys.size}/${API_KEYS.length} locked)`);
+}
+
+function unlockKey(key) {
+  lockedKeys.delete(key);
+  console.log(`Key ...${key.slice(-6)} UNLOCKED (${lockedKeys.size}/${API_KEYS.length} locked)`);
 }
 
 function getNextProxy() {
@@ -738,6 +757,7 @@ async function submitMotionControl(session) {
           ...getStickyProxyAgent(proxyUrl),
         });
         markKeyOk(apiKey);
+        lockKey(apiKey);
         if (proxyUrl) markProxyOk(proxyUrl);
         session.apiKey = apiKey;
         session.submitProxy = proxyUrl;
@@ -1011,6 +1031,7 @@ bot.on("callback_query", async (query) => {
     if (!taskId) {
       console.error("No task_id in response:", JSON.stringify(submitResult));
       bot.sendMessage(chatId, "Gagal submit task. Response tidak valid dari Freepik API.");
+      if (session.apiKey) unlockKey(session.apiKey);
       session.isGenerating = false;
       return;
     }
@@ -1025,6 +1046,7 @@ bot.on("callback_query", async (query) => {
 
     if (!result) {
       bot.sendMessage(chatId, "Timeout: Video belum selesai setelah 20 menit. Coba lagi nanti.");
+      if (session.apiKey) unlockKey(session.apiKey);
       session.isGenerating = false;
       return;
     }
@@ -1078,11 +1100,13 @@ bot.on("callback_query", async (query) => {
       bot.sendMessage(chatId, `Generate gagal. Status: ${status}\n\nDetail: ${JSON.stringify(result?.data)}`);
     }
 
+    if (session.apiKey) unlockKey(session.apiKey);
     resetSession(msg);
   } catch (err) {
     console.error("Generate error:", err.response?.data || err.message);
     const errorMsg = err.response?.data?.message || err.response?.data?.error || err.message;
     bot.sendMessage(chatId, `Error: ${errorMsg}`);
+    if (session.apiKey) unlockKey(session.apiKey);
     session.isGenerating = false;
   }
 });
