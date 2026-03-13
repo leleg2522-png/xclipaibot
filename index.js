@@ -30,13 +30,15 @@ if (!TELEGRAM_TOKEN) {
   process.exit(1);
 }
 
-const RAW_KEYS = process.env.FREEPIK_API_KEY || "";
+const RAW_KEYS = process.env.GLIO_API_KEY || process.env.FREEPIK_API_KEY || "";
 const API_KEYS = RAW_KEYS.split(",").map((k) => k.trim().replace(/[^\x20-\x7E]/g, "")).filter(Boolean);
 
 if (API_KEYS.length === 0) {
-  console.error("FREEPIK_API_KEY is not set (provide one or more keys separated by commas)");
+  console.error("GLIO_API_KEY is not set (provide one or more keys separated by commas)");
   process.exit(1);
 }
+
+const GLIO_BASE = "https://api.glio.io";
 
 const USE_PROXY = (process.env.USE_PROXY || "true").toLowerCase() === "true";
 const RAW_PROXIES = process.env.PROXY_LIST || "";
@@ -49,7 +51,7 @@ const PROXIES = RAW_PROXIES.split(",").map((p) => p.trim()).filter(Boolean).map(
   return p;
 });
 
-console.log(`Loaded ${API_KEYS.length} Freepik API key(s)`);
+console.log(`Loaded ${API_KEYS.length} Glio API key(s)`);
 console.log(`Loaded ${PROXIES.length} proxy(ies)`);
 
 let keyIndex = 0;
@@ -153,7 +155,7 @@ const PROXY_BAN_DURATION = 2 * 60 * 60 * 1000;
 function markProxyFailed(proxyUrl, cooldownMs = 240000, banned = false) {
   if (banned) {
     proxyFailures[proxyUrl] = { until: Date.now() + PROXY_BAN_DURATION };
-    console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} BLOCKED by Freepik, cooldown 2 hours`);
+    console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} BLOCKED, cooldown 2 hours`);
   } else {
     proxyFailures[proxyUrl] = { until: Date.now() + cooldownMs };
     console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} cooldown for ${cooldownMs / 1000}s`);
@@ -398,7 +400,7 @@ bot.onText(/\/start/, (msg) => {
     msg.chat.id,
 `🎬 Kling 2.6 Motion Control Bot
 
-Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Freepik Kling 2.6 Motion Control API.
+Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Glio.io Kling Motion Control API.
 
 Cara pakai:
 1️⃣ Login dulu: /login email password
@@ -700,149 +702,100 @@ bot.on("document", async (msg) => {
 });
 
 async function submitMotionControl(session) {
-  const modelSlug = session.model === "v3" ? "kling-v3" : "kling-v2-6";
-  const endpoint =
-    session.quality === "pro"
-      ? `https://api.freepik.com/v1/ai/video/${modelSlug}-motion-control-pro`
-      : `https://api.freepik.com/v1/ai/video/${modelSlug}-motion-control-std`;
+  const glioModel = session.model === "v3" ? "kling-3.0-motion-control" : "kling-v2.6-motion-control";
+  const mode = session.quality === "pro" ? "1080p" : "720p";
 
   const imageUrl = session.imageFile.publicUrl;
   const videoUrl = session.videoFile.publicUrl;
 
-  console.log(`Using image_url: ${imageUrl}`);
-  console.log(`Using video_url: ${videoUrl}`);
+  console.log(`[Glio] Submit model=${glioModel} mode=${mode}`);
+  console.log(`[Glio] image_url: ${imageUrl}`);
+  console.log(`[Glio] video_url: ${videoUrl}`);
 
   const body = {
-    image_url: imageUrl,
-    video_url: videoUrl,
-    character_orientation: session.orientation,
-    cfg_scale: 0.5,
+    model: glioModel,
+    params: {
+      image_url: imageUrl,
+      video_url: videoUrl,
+      mode: mode,
+      character_orientation: session.orientation,
+    },
   };
 
   if (session.prompt) {
-    body.prompt = session.prompt;
+    body.params.prompt = session.prompt;
   }
 
-  console.log(`Submit image_url: ${body.image_url}`);
-  console.log(`Submit video_url: ${body.video_url}`);
-
   const triedKeys = new Set();
-  const triedProxies = new Set();
   let lastError = null;
 
   for (let keyAttempt = 0; keyAttempt < API_KEYS.length; keyAttempt++) {
     const apiKey = getNextApiKey();
     if (triedKeys.has(apiKey)) continue;
     triedKeys.add(apiKey);
-    console.log(`Using API key ...${apiKey.slice(-6)} for submit (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
+    console.log(`[Glio] Using key ...${apiKey.slice(-6)} (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
 
-    triedProxies.clear();
-    for (let attempt = 0; attempt < PROXIES.length + 1; attempt++) {
-      const proxyUrl = getNextProxy();
-      if (!proxyUrl) {
-        console.log("No proxy available, trying direct...");
-      } else if (triedProxies.has(proxyUrl)) {
-        console.log("All proxies tried for this key, moving to next key...");
-        break;
+    try {
+      const response = await axios.post(`${GLIO_BASE}/v1/jobs`, body, {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        timeout: 30000,
+      });
+      markKeyOk(apiKey);
+      lockKey(apiKey);
+      session.apiKey = apiKey;
+      return response.data;
+    } catch (err) {
+      const status = err.response?.status;
+      const msg = err.response?.data?.message || err.response?.data?.detail || err.message;
+      lastError = err;
+
+      console.log(`[Glio] Submit error: ${status} - ${msg}`);
+
+      if (status === 429) {
+        markKeyFailed(apiKey, 300000);
+        console.log(`[Glio] Key ...${apiKey.slice(-6)} rate limited, cooldown 5min`);
+        continue;
       }
-      if (proxyUrl) triedProxies.add(proxyUrl);
 
-      try {
-        const response = await axios.post(endpoint, body, {
-          headers: {
-            "Content-Type": "application/json",
-            "x-freepik-api-key": apiKey,
-          },
-          timeout: 30000,
-          ...getStickyProxyAgent(proxyUrl),
-        });
-        markKeyOk(apiKey);
-        lockKey(apiKey);
-        if (proxyUrl) markProxyOk(proxyUrl);
-        session.apiKey = apiKey;
-        session.submitProxy = proxyUrl;
-        return response.data;
-      } catch (err) {
-        const status = err.response?.status;
-        const msg = err.response?.data?.message || err.message;
-        lastError = err;
-
-        const msgLower = (msg || "").toLowerCase();
-
-        if (status === 403 && (msgLower.includes("disabled") || msgLower.includes("deactivated") || msgLower.includes("suspended"))) {
-          markKeyFailed(apiKey, 86400000);
-          console.log(`API key ...${apiKey.slice(-6)} ACCOUNT DISABLED, disabled 24h, trying next key...`);
-          break;
-        }
-
-        if (status === 403 && msgLower.includes("blocked")) {
-          if (proxyUrl) markProxyFailed(proxyUrl, 0, true);
-          console.log(`Proxy ${proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ":***@") : "direct"} BLOCKED by Freepik, trying next proxy...`);
-          continue;
-        }
-
-        if (status === 403) {
-          if (proxyUrl) markProxyFailed(proxyUrl, 0, true);
-          console.log(`403 on proxy ${proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ":***@") : "direct"}, trying next proxy...`);
-          continue;
-        }
-
-        if (status === 429) {
-          markKeyFailed(apiKey, 300000);
-          console.log(`API key ...${apiKey.slice(-6)} rate limited (429), cooldown 5min, trying next key...`);
-          break;
-        }
-
-        if (status === 401) {
-          markKeyFailed(apiKey, 86400000);
-          console.log(`API key ...${apiKey.slice(-6)} invalid/expired (401), disabled 24h, trying next key...`);
-          break;
-        }
-
-        if (status === 402) {
-          markKeyFailed(apiKey, 86400000);
-          console.log(`API key ...${apiKey.slice(-6)} quota habis (402), disabled 24h, trying next key...`);
-          break;
-        }
-
-        throw err;
+      if (status === 401) {
+        markKeyFailed(apiKey, 86400000);
+        console.log(`[Glio] Key ...${apiKey.slice(-6)} invalid, disabled 24h`);
+        continue;
       }
+
+      if (status === 402 || status === 403) {
+        markKeyFailed(apiKey, 86400000);
+        console.log(`[Glio] Key ...${apiKey.slice(-6)} no balance/forbidden, disabled 24h`);
+        continue;
+      }
+
+      throw err;
     }
   }
 
   if (lastError) throw lastError;
-  throw new Error("Semua API key dan proxy tidak tersedia. Coba lagi nanti.");
+  throw new Error("Semua API key tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey, stickyProxy, model, quality) {
-  let statusBase;
-  if (model === "v3") {
-    const q = quality === "pro" ? "pro" : "std";
-    statusBase = `https://api.freepik.com/v1/ai/video/kling-v3-motion-control-${q}`;
-  } else {
-    statusBase = "https://api.freepik.com/v1/ai/image-to-video/kling-v2-6";
-  }
-  const url = `${statusBase}/${taskId}`;
+async function checkTaskStatus(taskId, apiKey) {
   const key = apiKey || getNextApiKey();
+  const url = `${GLIO_BASE}/v1/jobs/${taskId}`;
 
-  const proxyConfig = stickyProxy ? getStickyProxyAgent(stickyProxy) : {};
   const response = await axios.get(url, {
     headers: {
-      "x-freepik-api-key": key,
+      "Authorization": `Bearer ${key}`,
     },
     timeout: 15000,
-    ...proxyConfig,
   });
 
   return response.data;
 }
 
-async function pollForResult(chatId, taskId, apiKey, model, quality) {
+async function pollForResult(chatId, taskId, apiKey) {
   const maxAttempts = 80;
-
-  let currentProxy = getNextProxy();
-  console.log(`Task ${taskId} polling via proxy: ${currentProxy ? currentProxy.replace(/:[^:@]+@/, ":***@") : "direct"}`);
-
   let consecutiveErrors = 0;
   let totalWaitMs = 0;
 
@@ -852,35 +805,22 @@ async function pollForResult(chatId, taskId, apiKey, model, quality) {
     return 20000;
   }
 
-  function switchProxy() {
-    if (currentProxy) markProxyFailed(currentProxy, 0, true);
-    const newProxy = getNextProxy();
-    if (newProxy && newProxy !== currentProxy) {
-      currentProxy = newProxy;
-      console.log(`Switched to proxy: ${currentProxy.replace(/:[^:@]+@/, ":***@")}`);
-    } else {
-      currentProxy = null;
-      console.log("No available proxy, polling direct");
-    }
-  }
-
   for (let i = 0; i < maxAttempts; i++) {
     const intervalMs = getInterval(i) + Math.floor(Math.random() * 1000);
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     totalWaitMs += intervalMs;
 
     try {
-      const result = await checkTaskStatus(taskId, apiKey, currentProxy, model, quality);
-      const status = result?.data?.status;
-      console.log(`Poll #${i + 1} for task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s elapsed)`);
+      const result = await checkTaskStatus(taskId, apiKey);
+      const status = result?.status;
+      console.log(`[Glio] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
       consecutiveErrors = 0;
-      if (currentProxy) markProxyOk(currentProxy);
 
-      if (status === "COMPLETED") {
-        console.log("Task completed! Generated URLs:", JSON.stringify(result?.data?.generated));
+      if (status === "completed") {
+        console.log("[Glio] Task completed!", JSON.stringify(result?.result));
         return result;
-      } else if (status === "FAILED" || status === "ERROR") {
-        console.log("Task failed:", JSON.stringify(result?.data));
+      } else if (status === "failed" || status === "error") {
+        console.log("[Glio] Task failed:", JSON.stringify(result));
         return result;
       }
 
@@ -889,23 +829,12 @@ async function pollForResult(chatId, taskId, apiKey, model, quality) {
         bot.sendMessage(chatId, `Masih memproses... (${elapsed} detik)`);
       }
     } catch (err) {
-      const status = err.response?.status;
-      const msg = err.response?.data?.message || err.message;
-      console.error(`Poll attempt ${i + 1} error:`, status, err.response?.data || err.message);
+      console.error(`[Glio] Poll #${i + 1} error:`, err.response?.status, err.response?.data || err.message);
       consecutiveErrors++;
 
-      if (status === 403) {
-        console.log(`Proxy banned, switching to next proxy...`);
-        switchProxy();
-        consecutiveErrors = 0;
-        continue;
-      }
-
       if (consecutiveErrors >= 5) {
-        console.log("5 consecutive errors, switching proxy...");
-        switchProxy();
+        console.log("[Glio] 5 consecutive poll errors, continuing...");
         consecutiveErrors = 0;
-        continue;
       }
     }
   }
@@ -1026,23 +955,23 @@ bot.on("callback_query", async (query) => {
     const submitStart = Date.now();
     const submitResult = await submitMotionControl(session);
     const submitTime = ((Date.now() - submitStart) / 1000).toFixed(1);
-    const taskId = submitResult?.data?.task_id;
+    const taskId = submitResult?.id;
 
     if (!taskId) {
-      console.error("No task_id in response:", JSON.stringify(submitResult));
-      bot.sendMessage(chatId, "Gagal submit task. Response tidak valid dari Freepik API.");
+      console.error("[Glio] No job id in response:", JSON.stringify(submitResult));
+      bot.sendMessage(chatId, "Gagal submit task. Response tidak valid dari Glio API.");
       if (session.apiKey) unlockKey(session.apiKey);
       session.isGenerating = false;
       return;
     }
 
-    console.log(`Task ${taskId} submitted in ${submitTime}s`);
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nTask ID: ${taskId}\n\nMenunggu hasil...`);
+    console.log(`[Glio] Job ${taskId} submitted in ${submitTime}s`);
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
-    const result = await pollForResult(chatId, taskId, session.apiKey, session.model, session.quality);
+    const result = await pollForResult(chatId, taskId, session.apiKey);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
-    console.log(`Task ${taskId} polling finished in ${pollTime}s`);
+    console.log(`[Glio] Job ${taskId} polling finished in ${pollTime}s`);
 
     if (!result) {
       bot.sendMessage(chatId, "Timeout: Video belum selesai setelah 20 menit. Coba lagi nanti.");
@@ -1051,21 +980,22 @@ bot.on("callback_query", async (query) => {
       return;
     }
 
-    const status = result?.data?.status;
+    const jobStatus = result?.status;
 
-    if (status === "COMPLETED") {
-      const generated = result?.data?.generated || [];
-      console.log("Sending video results:", JSON.stringify(generated));
+    if (jobStatus === "completed") {
+      const jobResult = result?.result || {};
+      console.log("[Glio] Job result:", JSON.stringify(jobResult));
 
-      const videoUrls = generated.map((item) => {
-        if (typeof item === "string") return item;
-        return item?.video || item?.url || item?.src || null;
-      }).filter(Boolean);
+      const videoUrls = [];
+      if (jobResult.url) videoUrls.push(jobResult.url);
+      if (jobResult.urls && Array.isArray(jobResult.urls)) videoUrls.push(...jobResult.urls);
+      if (jobResult.video) videoUrls.push(jobResult.video);
 
-      console.log("Extracted video URLs:", videoUrls);
+      const uniqueUrls = [...new Set(videoUrls)].filter(Boolean);
+      console.log("[Glio] Video URLs:", uniqueUrls);
 
-      if (videoUrls.length > 0) {
-        for (const videoUrl of videoUrls) {
+      if (uniqueUrls.length > 0) {
+        for (const videoUrl of uniqueUrls) {
           try {
             console.log("Downloading video:", videoUrl.substring(0, 120));
             const videoResponse = await axios.get(videoUrl, {
@@ -1093,18 +1023,19 @@ bot.on("callback_query", async (query) => {
           }
         }
       } else {
-        console.log("No video URLs found in generated data:", JSON.stringify(generated));
+        console.log("[Glio] No video URLs in result:", JSON.stringify(jobResult));
         bot.sendMessage(chatId, "Video selesai tapi tidak ada URL hasil.");
       }
     } else {
-      bot.sendMessage(chatId, `Generate gagal. Status: ${status}\n\nDetail: ${JSON.stringify(result?.data)}`);
+      const errDetail = result?.error || result?.message || JSON.stringify(result);
+      bot.sendMessage(chatId, `Generate gagal. Status: ${jobStatus}\n\nDetail: ${errDetail}`);
     }
 
     if (session.apiKey) unlockKey(session.apiKey);
     resetSession(msg);
   } catch (err) {
-    console.error("Generate error:", err.response?.data || err.message);
-    const errorMsg = err.response?.data?.message || err.response?.data?.error || err.message;
+    console.error("[Glio] Generate error:", err.response?.data || err.message);
+    const errorMsg = err.response?.data?.message || err.response?.data?.detail || err.response?.data?.error || err.message;
     bot.sendMessage(chatId, `Error: ${errorMsg}`);
     if (session.apiKey) unlockKey(session.apiKey);
     session.isGenerating = false;
@@ -1115,4 +1046,4 @@ bot.on("polling_error", (err) => {
   console.error("Polling error:", err.code, err.message);
 });
 
-console.log("Bot Telegram Kling 2.6 Motion Control sudah berjalan!");
+console.log("Bot Telegram Kling Motion Control (Glio.io) sudah berjalan!");
