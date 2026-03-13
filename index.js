@@ -954,42 +954,25 @@ bot.on("callback_query", async (query) => {
 
       const videoUrls = [];
 
-      function extractUrls(obj) {
+      function collectUrls(obj) {
         if (!obj || typeof obj !== "object") return;
-        if (typeof obj === "string" && (obj.startsWith("http://") || obj.startsWith("https://"))) {
-          videoUrls.push(obj);
-          return;
-        }
         for (const [key, val] of Object.entries(obj)) {
-          if (typeof val === "string" && (val.startsWith("http://") || val.startsWith("https://")) && (key === "url" || key === "video" || key === "src" || key === "download_url" || key === "video_url" || key === "output")) {
+          if (typeof val === "string" && val.startsWith("http")) {
             videoUrls.push(val);
           } else if (Array.isArray(val)) {
             for (const item of val) {
               if (typeof item === "string" && item.startsWith("http")) videoUrls.push(item);
-              else if (typeof item === "object") extractUrls(item);
+              else if (typeof item === "object") collectUrls(item);
             }
           } else if (typeof val === "object" && val !== null) {
-            extractUrls(val);
+            collectUrls(val);
           }
         }
       }
 
-      extractUrls(result?.result);
-      extractUrls(result?.results);
-      extractUrls(result?.data);
-      extractUrls(result?.output);
-      if (result?.result_url) videoUrls.push(result.result_url);
-      if (result?.video_url) videoUrls.push(result.video_url);
-      if (result?.url) videoUrls.push(result.url);
-      if (Array.isArray(result?.results)) {
-        for (const r of result.results) {
-          if (r?.url) videoUrls.push(r.url);
-          if (r?.video) videoUrls.push(r.video);
-          if (Array.isArray(r?.urls)) videoUrls.push(...r.urls);
-        }
-      }
+      collectUrls(result);
 
-      const uniqueUrls = [...new Set(videoUrls)].filter(u => u && !u.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/i));
+      const uniqueUrls = [...new Set(videoUrls)].filter(u => u && u.match(/\.(mp4|mov|webm|avi)(\?|$)/i));
       console.log("[Glio] Extracted video URLs:", uniqueUrls);
 
       if (uniqueUrls.length > 0) {
