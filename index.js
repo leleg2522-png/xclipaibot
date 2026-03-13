@@ -817,10 +817,10 @@ async function pollForResult(chatId, taskId, apiKey) {
       consecutiveErrors = 0;
 
       if (status === "completed") {
-        console.log("[Glio] Task completed!", JSON.stringify(result?.result));
+        console.log("[Glio] Task completed! Full response:", JSON.stringify(result));
         return result;
       } else if (status === "failed" || status === "error") {
-        console.log("[Glio] Task failed:", JSON.stringify(result));
+        console.log("[Glio] Task failed! Full response:", JSON.stringify(result));
         return result;
       }
 
@@ -983,16 +983,38 @@ bot.on("callback_query", async (query) => {
     const jobStatus = result?.status;
 
     if (jobStatus === "completed") {
-      const jobResult = result?.result || {};
-      console.log("[Glio] Job result:", JSON.stringify(jobResult));
+      console.log("[Glio] Full completed result:", JSON.stringify(result));
 
       const videoUrls = [];
-      if (jobResult.url) videoUrls.push(jobResult.url);
-      if (jobResult.urls && Array.isArray(jobResult.urls)) videoUrls.push(...jobResult.urls);
-      if (jobResult.video) videoUrls.push(jobResult.video);
+
+      function extractUrls(obj) {
+        if (!obj || typeof obj !== "object") return;
+        if (typeof obj === "string" && (obj.startsWith("http://") || obj.startsWith("https://"))) {
+          videoUrls.push(obj);
+          return;
+        }
+        for (const [key, val] of Object.entries(obj)) {
+          if (typeof val === "string" && (val.startsWith("http://") || val.startsWith("https://")) && (key === "url" || key === "video" || key === "src" || key === "download_url" || key === "video_url" || key === "output")) {
+            videoUrls.push(val);
+          } else if (Array.isArray(val)) {
+            for (const item of val) {
+              if (typeof item === "string" && item.startsWith("http")) videoUrls.push(item);
+              else if (typeof item === "object") extractUrls(item);
+            }
+          } else if (typeof val === "object" && val !== null) {
+            extractUrls(val);
+          }
+        }
+      }
+
+      extractUrls(result?.result);
+      extractUrls(result?.data);
+      extractUrls(result?.output);
+      if (result?.result_url) videoUrls.push(result.result_url);
+      if (result?.video_url) videoUrls.push(result.video_url);
 
       const uniqueUrls = [...new Set(videoUrls)].filter(Boolean);
-      console.log("[Glio] Video URLs:", uniqueUrls);
+      console.log("[Glio] Extracted video URLs:", uniqueUrls);
 
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
@@ -1023,8 +1045,8 @@ bot.on("callback_query", async (query) => {
           }
         }
       } else {
-        console.log("[Glio] No video URLs in result:", JSON.stringify(jobResult));
-        bot.sendMessage(chatId, "Video selesai tapi tidak ada URL hasil.");
+        console.log("[Glio] No video URLs found. Full response:", JSON.stringify(result));
+        bot.sendMessage(chatId, `Video selesai tapi URL tidak ditemukan.\n\nDebug: ${JSON.stringify(result).substring(0, 500)}`);
       }
     } else {
       const errDetail = result?.error || result?.message || JSON.stringify(result);
