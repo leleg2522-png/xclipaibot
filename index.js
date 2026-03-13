@@ -747,21 +747,29 @@ async function submitMotionControl(session) {
         const msg = err.response?.data?.message || err.message;
         lastError = err;
 
-        if (status === 403 && msg.includes("blocked")) {
+        const msgLower = (msg || "").toLowerCase();
+
+        if (status === 403 && (msgLower.includes("disabled") || msgLower.includes("deactivated") || msgLower.includes("suspended"))) {
+          markKeyFailed(apiKey, 86400000);
+          console.log(`API key ...${apiKey.slice(-6)} ACCOUNT DISABLED, disabled 24h, trying next key...`);
+          break;
+        }
+
+        if (status === 403 && msgLower.includes("blocked")) {
           if (proxyUrl) markProxyFailed(proxyUrl, 0, true);
-          console.log(`Proxy ${proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ":***@") : "direct"} BANNED, trying next...`);
+          console.log(`Proxy ${proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ":***@") : "direct"} BLOCKED by Freepik, trying next proxy...`);
+          continue;
+        }
+
+        if (status === 403) {
+          if (proxyUrl) markProxyFailed(proxyUrl, 0, true);
+          console.log(`403 on proxy ${proxyUrl ? proxyUrl.replace(/:[^:@]+@/, ":***@") : "direct"}, trying next proxy...`);
           continue;
         }
 
         if (status === 429) {
           markKeyFailed(apiKey, 300000);
           console.log(`API key ...${apiKey.slice(-6)} rate limited (429), cooldown 5min, trying next key...`);
-          break;
-        }
-
-        if (status === 403) {
-          markKeyFailed(apiKey, 600000);
-          console.log(`API key ...${apiKey.slice(-6)} forbidden (403), cooldown 10min, trying next key...`);
           break;
         }
 
