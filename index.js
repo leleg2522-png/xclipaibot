@@ -853,7 +853,7 @@ bot.onText(/\/generate/, async (msg) => {
   }
 
   if (session.lastGenerateTime) {
-    const cooldownMs = 4 * 60 * 1000;
+    const cooldownMs = 10 * 60 * 1000;
     const elapsed = Date.now() - session.lastGenerateTime;
     if (elapsed < cooldownMs) {
       const remaining = Math.ceil((cooldownMs - elapsed) / 1000);
