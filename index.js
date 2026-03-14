@@ -757,16 +757,21 @@ async function submitMotionControl(session) {
     console.log(`[apimodels] Using key ...${apiKey.slice(-6)} (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
 
     try {
+      const proxyUrl = getNextProxy();
+      const proxyOpts = getStickyProxyAgent(proxyUrl);
       const response = await axios.post(`${API_BASE}/video/generations`, body, {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${apiKey}`,
         },
         timeout: 30000,
+        ...proxyOpts,
       });
       markKeyOk(apiKey);
+      if (proxyUrl) markProxyOk(proxyUrl);
       lockKey(apiKey);
       session.apiKey = apiKey;
+      session.proxyUrl = proxyUrl;
       return response.data;
     } catch (err) {
       const status = err.response?.status;
@@ -774,6 +779,10 @@ async function submitMotionControl(session) {
       lastError = err;
 
       console.log(`[apimodels] Submit error: ${status} - ${msg}`);
+
+      if (proxyUrl && (status === 407 || status === 502 || status === 503 || err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT")) {
+        markProxyFailed(proxyUrl, 240000, status === 407);
+      }
 
       if (status === 429) {
         markKeyFailed(apiKey, 300000);
@@ -801,21 +810,23 @@ async function submitMotionControl(session) {
   throw new Error("Semua API key tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey) {
+async function checkTaskStatus(taskId, apiKey, proxyUrl) {
   const key = apiKey || getNextApiKey();
   const url = `${API_BASE}/video/generations?task_id=${taskId}`;
+  const proxyOpts = getStickyProxyAgent(proxyUrl);
 
   const response = await axios.get(url, {
     headers: {
       "Authorization": `Bearer ${key}`,
     },
     timeout: 15000,
+    ...proxyOpts,
   });
 
   return response.data;
 }
 
-async function pollForResult(chatId, taskId, apiKey) {
+async function pollForResult(chatId, taskId, apiKey, proxyUrl) {
   const maxAttempts = 80;
   let consecutiveErrors = 0;
   let totalWaitMs = 0;
@@ -832,7 +843,7 @@ async function pollForResult(chatId, taskId, apiKey) {
     totalWaitMs += intervalMs;
 
     try {
-      const rawResult = await checkTaskStatus(taskId, apiKey);
+      const rawResult = await checkTaskStatus(taskId, apiKey, proxyUrl);
       const result = rawResult?.data || rawResult;
       const status = result?.status;
       console.log(`[apimodels] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
@@ -980,7 +991,7 @@ bot.on("callback_query", async (query) => {
     bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nPemakaian hari ini: ${usageNow}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
-    const result = await pollForResult(chatId, taskId, session.apiKey);
+    const result = await pollForResult(chatId, taskId, session.apiKey, session.proxyUrl);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
     console.log(`[apimodels] Job ${taskId} polling finished in ${pollTime}s`);
 
