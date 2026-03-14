@@ -998,6 +998,7 @@ bot.on("callback_query", async (query) => {
     const submitStart = Date.now();
     const submitResult = await submitMotionControl(session);
     const submitTime = ((Date.now() - submitStart) / 1000).toFixed(1);
+    console.log("[apimodels] Full submit response:", JSON.stringify(submitResult));
     const taskId = submitResult?.data?.task_id || submitResult?.task_id || submitResult?.id;
 
     if (!taskId) {
