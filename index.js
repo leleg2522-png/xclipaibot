@@ -42,15 +42,15 @@ if (!TELEGRAM_TOKEN) {
   process.exit(1);
 }
 
-const RAW_KEYS = process.env.GLIO_API_KEY || process.env.FREEPIK_API_KEY || "";
+const RAW_KEYS = process.env.APIMODELS_API_KEY || process.env.GLIO_API_KEY || process.env.FREEPIK_API_KEY || "";
 const API_KEYS = RAW_KEYS.split(",").map((k) => k.trim().replace(/[^\x20-\x7E]/g, "")).filter(Boolean);
 
 if (API_KEYS.length === 0) {
-  console.error("GLIO_API_KEY is not set (provide one or more keys separated by commas)");
+  console.error("APIMODELS_API_KEY is not set (provide one or more keys separated by commas)");
   process.exit(1);
 }
 
-const GLIO_BASE = "https://api.glio.io";
+const API_BASE = "https://apimodels.app/api/v1";
 
 const USE_PROXY = (process.env.USE_PROXY || "true").toLowerCase() === "true";
 const RAW_PROXIES = process.env.PROXY_LIST || "";
@@ -63,7 +63,7 @@ const PROXIES = RAW_PROXIES.split(",").map((p) => p.trim()).filter(Boolean).map(
   return p;
 });
 
-console.log(`Loaded ${API_KEYS.length} Glio API key(s)`);
+console.log(`Loaded ${API_KEYS.length} apimodels.app API key(s)`);
 console.log(`Loaded ${PROXIES.length} proxy(ies)`);
 
 let keyIndex = 0;
@@ -431,7 +431,7 @@ bot.onText(/\/start/, (msg) => {
     msg.chat.id,
 `🎬 Kling 2.6 Motion Control Bot
 
-Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Glio.io Kling Motion Control API.
+Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Kling Motion Control API.
 
 Cara pakai:
 1️⃣ Login dulu: /login email password
@@ -725,28 +725,26 @@ bot.on("document", async (msg) => {
 });
 
 async function submitMotionControl(session) {
-  const glioModel = "kling-v2.6-motion-control";
+  const modelName = "kling-motion-control";
   const mode = session.quality === "pro" ? "1080p" : "720p";
 
   const imageUrl = session.imageFile.publicUrl;
   const videoUrl = session.videoFile.publicUrl;
 
-  console.log(`[Glio] Submit model=${glioModel} mode=${mode}`);
-  console.log(`[Glio] image_url: ${imageUrl}`);
-  console.log(`[Glio] video_url: ${videoUrl}`);
+  console.log(`[apimodels] Submit model=${modelName} mode=${mode}`);
+  console.log(`[apimodels] image_url: ${imageUrl}`);
+  console.log(`[apimodels] video_url: ${videoUrl}`);
 
   const body = {
-    model: glioModel,
-    params: {
-      image_url: imageUrl,
-      video_url: videoUrl,
-      mode: mode,
-      character_orientation: session.orientation,
-    },
+    model: modelName,
+    input_urls: [imageUrl],
+    video_urls: [videoUrl],
+    mode: mode,
+    character_orientation: session.orientation,
   };
 
   if (session.prompt) {
-    body.params.prompt = session.prompt;
+    body.prompt = session.prompt;
   }
 
   const triedKeys = new Set();
@@ -756,10 +754,10 @@ async function submitMotionControl(session) {
     const apiKey = getNextApiKey();
     if (triedKeys.has(apiKey)) continue;
     triedKeys.add(apiKey);
-    console.log(`[Glio] Using key ...${apiKey.slice(-6)} (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
+    console.log(`[apimodels] Using key ...${apiKey.slice(-6)} (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
 
     try {
-      const response = await axios.post(`${GLIO_BASE}/v1/jobs`, body, {
+      const response = await axios.post(`${API_BASE}/video/generations`, body, {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${apiKey}`,
@@ -775,23 +773,23 @@ async function submitMotionControl(session) {
       const msg = err.response?.data?.message || err.response?.data?.detail || err.message;
       lastError = err;
 
-      console.log(`[Glio] Submit error: ${status} - ${msg}`);
+      console.log(`[apimodels] Submit error: ${status} - ${msg}`);
 
       if (status === 429) {
         markKeyFailed(apiKey, 300000);
-        console.log(`[Glio] Key ...${apiKey.slice(-6)} rate limited, cooldown 5min`);
+        console.log(`[apimodels] Key ...${apiKey.slice(-6)} rate limited, cooldown 5min`);
         continue;
       }
 
       if (status === 401) {
         markKeyFailed(apiKey, 86400000);
-        console.log(`[Glio] Key ...${apiKey.slice(-6)} invalid, disabled 24h`);
+        console.log(`[apimodels] Key ...${apiKey.slice(-6)} invalid, disabled 24h`);
         continue;
       }
 
       if (status === 402 || status === 403) {
         markKeyFailed(apiKey, 86400000);
-        console.log(`[Glio] Key ...${apiKey.slice(-6)} no balance/forbidden, disabled 24h`);
+        console.log(`[apimodels] Key ...${apiKey.slice(-6)} no balance/forbidden, disabled 24h`);
         continue;
       }
 
@@ -805,7 +803,7 @@ async function submitMotionControl(session) {
 
 async function checkTaskStatus(taskId, apiKey) {
   const key = apiKey || getNextApiKey();
-  const url = `${GLIO_BASE}/v1/jobs/${taskId}`;
+  const url = `${API_BASE}/video/generations?task_id=${taskId}`;
 
   const response = await axios.get(url, {
     headers: {
@@ -834,16 +832,17 @@ async function pollForResult(chatId, taskId, apiKey) {
     totalWaitMs += intervalMs;
 
     try {
-      const result = await checkTaskStatus(taskId, apiKey);
+      const rawResult = await checkTaskStatus(taskId, apiKey);
+      const result = rawResult?.data || rawResult;
       const status = result?.status;
-      console.log(`[Glio] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
+      console.log(`[apimodels] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
       consecutiveErrors = 0;
 
       if (status === "completed") {
-        console.log("[Glio] Task completed! Full response:", JSON.stringify(result));
+        console.log("[apimodels] Task completed! Full response:", JSON.stringify(rawResult));
         return result;
       } else if (status === "failed" || status === "error") {
-        console.log("[Glio] Task failed! Full response:", JSON.stringify(result));
+        console.log("[apimodels] Task failed! Full response:", JSON.stringify(rawResult));
         return result;
       }
 
@@ -852,11 +851,11 @@ async function pollForResult(chatId, taskId, apiKey) {
         bot.sendMessage(chatId, `Masih memproses... (${elapsed} detik)`);
       }
     } catch (err) {
-      console.error(`[Glio] Poll #${i + 1} error:`, err.response?.status, err.response?.data || err.message);
+      console.error(`[apimodels] Poll #${i + 1} error:`, err.response?.status, err.response?.data || err.message);
       consecutiveErrors++;
 
       if (consecutiveErrors >= 5) {
-        console.log("[Glio] 5 consecutive poll errors, continuing...");
+        console.log("[apimodels] 5 consecutive poll errors, continuing...");
         consecutiveErrors = 0;
       }
     }
@@ -965,17 +964,17 @@ bot.on("callback_query", async (query) => {
     const submitStart = Date.now();
     const submitResult = await submitMotionControl(session);
     const submitTime = ((Date.now() - submitStart) / 1000).toFixed(1);
-    const taskId = submitResult?.id;
+    const taskId = submitResult?.data?.task_id || submitResult?.task_id || submitResult?.id;
 
     if (!taskId) {
-      console.error("[Glio] No job id in response:", JSON.stringify(submitResult));
-      bot.sendMessage(chatId, "Gagal submit task. Response tidak valid dari Glio API.");
+      console.error("[apimodels] No task_id in response:", JSON.stringify(submitResult));
+      bot.sendMessage(chatId, "Gagal submit task. Response tidak valid dari API.");
       if (session.apiKey) unlockKey(session.apiKey);
       session.isGenerating = false;
       return;
     }
 
-    console.log(`[Glio] Job ${taskId} submitted in ${submitTime}s`);
+    console.log(`[apimodels] Job ${taskId} submitted in ${submitTime}s`);
     await incrementDailyUsage(session.userId);
     const usageNow = await getDailyUsage(session.userId);
     bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nPemakaian hari ini: ${usageNow}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
@@ -983,7 +982,7 @@ bot.on("callback_query", async (query) => {
     const pollStart = Date.now();
     const result = await pollForResult(chatId, taskId, session.apiKey);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
-    console.log(`[Glio] Job ${taskId} polling finished in ${pollTime}s`);
+    console.log(`[apimodels] Job ${taskId} polling finished in ${pollTime}s`);
 
     if (!result) {
       bot.sendMessage(chatId, "Timeout: Video belum selesai setelah 20 menit. Coba lagi nanti.");
@@ -995,30 +994,37 @@ bot.on("callback_query", async (query) => {
     const jobStatus = result?.status;
 
     if (jobStatus === "completed") {
-      console.log("[Glio] Full completed result:", JSON.stringify(result));
+      console.log("[apimodels] Full completed result:", JSON.stringify(result));
 
-      const videoUrls = [];
+      let videoUrls = [];
 
-      function collectUrls(obj) {
-        if (!obj || typeof obj !== "object") return;
-        for (const [key, val] of Object.entries(obj)) {
-          if (typeof val === "string" && val.startsWith("http")) {
-            videoUrls.push(val);
-          } else if (Array.isArray(val)) {
-            for (const item of val) {
-              if (typeof item === "string" && item.startsWith("http")) videoUrls.push(item);
-              else if (typeof item === "object") collectUrls(item);
-            }
-          } else if (typeof val === "object" && val !== null) {
-            collectUrls(val);
-          }
-        }
+      if (Array.isArray(result.videos) && result.videos.length > 0) {
+        videoUrls = result.videos.filter(u => typeof u === "string" && u.startsWith("http"));
       }
 
-      collectUrls(result);
+      if (videoUrls.length === 0) {
+        function collectUrls(obj) {
+          const found = [];
+          if (!obj || typeof obj !== "object") return found;
+          for (const [key, val] of Object.entries(obj)) {
+            if (typeof val === "string" && val.startsWith("http")) {
+              found.push(val);
+            } else if (Array.isArray(val)) {
+              for (const item of val) {
+                if (typeof item === "string" && item.startsWith("http")) found.push(item);
+                else if (typeof item === "object") found.push(...collectUrls(item));
+              }
+            } else if (typeof val === "object" && val !== null) {
+              found.push(...collectUrls(val));
+            }
+          }
+          return found;
+        }
+        videoUrls = collectUrls(result);
+      }
 
       const uniqueUrls = [...new Set(videoUrls)].filter(u => u && u.match(/\.(mp4|mov|webm|avi)(\?|$)/i));
-      console.log("[Glio] Extracted video URLs:", uniqueUrls);
+      console.log("[apimodels] Extracted video URLs:", uniqueUrls);
 
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
@@ -1049,7 +1055,7 @@ bot.on("callback_query", async (query) => {
           }
         }
       } else {
-        console.log("[Glio] No video URLs found. Full response:", JSON.stringify(result));
+        console.log("[apimodels] No video URLs found. Full response:", JSON.stringify(result));
         bot.sendMessage(chatId, `Video selesai tapi URL tidak ditemukan.\n\nDebug: ${JSON.stringify(result).substring(0, 500)}`);
       }
     } else {
@@ -1060,7 +1066,7 @@ bot.on("callback_query", async (query) => {
     if (session.apiKey) unlockKey(session.apiKey);
     resetSession(msg);
   } catch (err) {
-    console.error("[Glio] Generate error:", err.response?.data || err.message);
+    console.error("[apimodels] Generate error:", err.response?.data || err.message);
     const errorMsg = err.response?.data?.message || err.response?.data?.detail || err.response?.data?.error || err.message;
     bot.sendMessage(chatId, `Error: ${errorMsg}`);
     if (session.apiKey) unlockKey(session.apiKey);
@@ -1072,4 +1078,4 @@ bot.on("polling_error", (err) => {
   console.error("Polling error:", err.code, err.message);
 });
 
-console.log("Bot Telegram Kling Motion Control (Glio.io) sudah berjalan!");
+console.log("Bot Telegram Kling Motion Control (apimodels.app) sudah berjalan!");
