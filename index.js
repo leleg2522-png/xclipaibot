@@ -52,7 +52,7 @@ if (API_KEYS.length === 0) {
 
 const API_BASE = "https://apimodels.app/api/v1";
 
-const USE_PROXY = (process.env.USE_PROXY || "true").toLowerCase() === "true";
+const USE_PROXY = (process.env.USE_PROXY || "false").toLowerCase() === "true";
 const RAW_PROXIES = process.env.PROXY_LIST || "";
 const PROXIES = RAW_PROXIES.split(",").map((p) => p.trim()).filter(Boolean).map((p) => {
   const parts = p.split(":");
