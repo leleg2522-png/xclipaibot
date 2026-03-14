@@ -725,7 +725,7 @@ bot.on("document", async (msg) => {
 });
 
 async function submitMotionControl(session) {
-  const modelName = "kling-motion-control";
+  const modelName = "kling-2.6/motion-control";
   const mode = session.quality === "pro" ? "1080p" : "720p";
 
   const imageUrl = session.imageFile.publicUrl;
