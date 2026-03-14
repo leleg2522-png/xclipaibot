@@ -42,7 +42,7 @@ if (!TELEGRAM_TOKEN) {
   process.exit(1);
 }
 
-const RAW_KEYS = process.env.APIMODELS_API_KEY || process.env.GLIO_API_KEY || process.env.FREEPIK_API_KEY || "";
+const RAW_KEYS = process.env.APIMODELS_API_KEY || process.env.GLIO_API_KEY || "";
 const API_KEYS = RAW_KEYS.split(",").map((k) => k.trim().replace(/[^\x20-\x7E]/g, "")).filter(Boolean);
 
 if (API_KEYS.length === 0) {
@@ -1007,34 +1007,11 @@ bot.on("callback_query", async (query) => {
     if (jobStatus === "completed") {
       console.log("[apimodels] Full completed result:", JSON.stringify(result));
 
-      let videoUrls = [];
+      const videoUrls = Array.isArray(result.videos)
+        ? result.videos.filter(u => typeof u === "string" && u.startsWith("http"))
+        : [];
 
-      if (Array.isArray(result.videos) && result.videos.length > 0) {
-        videoUrls = result.videos.filter(u => typeof u === "string" && u.startsWith("http"));
-      }
-
-      if (videoUrls.length === 0) {
-        function collectUrls(obj) {
-          const found = [];
-          if (!obj || typeof obj !== "object") return found;
-          for (const [key, val] of Object.entries(obj)) {
-            if (typeof val === "string" && val.startsWith("http")) {
-              found.push(val);
-            } else if (Array.isArray(val)) {
-              for (const item of val) {
-                if (typeof item === "string" && item.startsWith("http")) found.push(item);
-                else if (typeof item === "object") found.push(...collectUrls(item));
-              }
-            } else if (typeof val === "object" && val !== null) {
-              found.push(...collectUrls(val));
-            }
-          }
-          return found;
-        }
-        videoUrls = collectUrls(result);
-      }
-
-      const uniqueUrls = [...new Set(videoUrls)].filter(u => u && u.match(/\.(mp4|mov|webm|avi)(\?|$)/i));
+      const uniqueUrls = [...new Set(videoUrls)];
       console.log("[apimodels] Extracted video URLs:", uniqueUrls);
 
       if (uniqueUrls.length > 0) {

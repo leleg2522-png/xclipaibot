@@ -40,7 +40,7 @@ Telegram bot that generates motion control videos using apimodels.app's API for 
 - **Response**: `{ code: 200, data: { task_id, status, videos: [...] } }`
 
 ## Multi-API Key System
-- `APIMODELS_API_KEY` supports comma-separated keys for parallel tasks (fallback: `GLIO_API_KEY`, `FREEPIK_API_KEY`)
+- `APIMODELS_API_KEY` supports comma-separated keys for parallel tasks (fallback: `GLIO_API_KEY`)
 - Each active task locks one key exclusively (1 task = 1 key)
 - Keys auto-unlock when task completes, fails, or times out
 - Failed keys get cooldown (429→5min, 401/402/403→24h)
@@ -58,7 +58,7 @@ Telegram bot that generates motion control videos using apimodels.app's API for 
 
 ## Environment Variables (Secrets)
 - `TELEGRAM_BOT_TOKEN` — Telegram bot token from @BotFather
-- `APIMODELS_API_KEY` — Comma-separated apimodels.app API keys (fallback: `GLIO_API_KEY`, `FREEPIK_API_KEY`)
+- `APIMODELS_API_KEY` — Comma-separated apimodels.app API keys (fallback: `GLIO_API_KEY`)
 - `RAILWAY_DATABASE_URL` — PostgreSQL connection string for user auth
 - `PROXY_LIST` — (optional) Comma-separated proxies (host:port:user:pass)
 - `USE_PROXY` — (optional) Enable/disable proxy (true/false)
