@@ -782,6 +782,8 @@ async function submitMotionControl(session) {
 
       if (proxyUrl && (status === 407 || status === 502 || status === 503 || err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT")) {
         markProxyFailed(proxyUrl, 240000, status === 407);
+        console.log(`[apimodels] Proxy error, retrying with next key/proxy...`);
+        continue;
       }
 
       if (status === 429) {
@@ -803,6 +805,27 @@ async function submitMotionControl(session) {
       }
 
       throw err;
+    }
+  }
+
+  if (USE_PROXY && lastError) {
+    console.log("[apimodels] All keys with proxy failed, retrying without proxy...");
+    const apiKey = getNextApiKey();
+    try {
+      const response = await axios.post(`${API_BASE}/video/generations`, body, {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        timeout: 30000,
+      });
+      markKeyOk(apiKey);
+      lockKey(apiKey);
+      session.apiKey = apiKey;
+      session.proxyUrl = null;
+      return response.data;
+    } catch (err) {
+      lastError = err;
     }
   }
 
