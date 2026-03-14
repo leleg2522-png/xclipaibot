@@ -19,7 +19,19 @@ if (RAILWAY_DB_URL) {
     max: 5,
   });
   db.query("SELECT 1")
-    .then(() => console.log("Database Railway terhubung!"))
+    .then(() => {
+      console.log("Database Railway terhubung!");
+      return db.query(`
+        CREATE TABLE IF NOT EXISTS daily_usage (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
+          count INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(user_id, usage_date)
+        )
+      `);
+    })
+    .then(() => console.log("daily_usage table ready"))
     .catch((err) => console.error("Database connection error:", err.message));
 } else {
   console.warn("RAILWAY_DATABASE_URL not set - login feature disabled");
@@ -203,6 +215,26 @@ function getPublicFileUrl(filename) {
     return `https://${PUBLIC_DOMAIN}/files/${filename}`;
   }
   return `http://localhost:${FILE_SERVER_PORT}/files/${filename}`;
+}
+
+const DAILY_LIMIT = 5;
+
+async function getDailyUsage(userId) {
+  if (!db) return 0;
+  const res = await db.query(
+    "SELECT count FROM daily_usage WHERE user_id = $1 AND usage_date = CURRENT_DATE",
+    [userId]
+  );
+  return res.rows.length > 0 ? res.rows[0].count : 0;
+}
+
+async function incrementDailyUsage(userId) {
+  if (!db) return;
+  await db.query(
+    `INSERT INTO daily_usage (user_id, usage_date, count) VALUES ($1, CURRENT_DATE, 1)
+     ON CONFLICT (user_id, usage_date) DO UPDATE SET count = daily_usage.count + 1`,
+    [userId]
+  );
 }
 
 async function downloadTelegramFile(fileId) {
@@ -541,6 +573,7 @@ bot.onText(/\/status/, async (msg) => {
     `Orientasi: ${session.orientation}`,
     `Kualitas: ${session.quality}`,
     `Generating: ${session.isGenerating ? "Ya" : "Tidak"}`,
+    `Pemakaian hari ini: ${session.userId ? await getDailyUsage(session.userId) : 0}/${DAILY_LIMIT}`,
   );
   bot.sendMessage(msg.chat.id, lines.join("\n"));
 });
@@ -852,6 +885,16 @@ bot.onText(/\/generate/, async (msg) => {
     return;
   }
 
+  try {
+    const usage = await getDailyUsage(session.userId);
+    if (usage >= DAILY_LIMIT) {
+      bot.sendMessage(chatId, `Limit harian tercapai (${usage}/${DAILY_LIMIT}). Coba lagi besok.`);
+      return;
+    }
+  } catch (err) {
+    console.error("Daily usage check error:", err.message);
+  }
+
   if (session.lastGenerateTime) {
     const cooldownMs = 10 * 60 * 1000;
     const elapsed = Date.now() - session.lastGenerateTime;
@@ -933,7 +976,9 @@ bot.on("callback_query", async (query) => {
     }
 
     console.log(`[Glio] Job ${taskId} submitted in ${submitTime}s`);
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\n\nMenunggu hasil...`);
+    await incrementDailyUsage(session.userId);
+    const usageNow = await getDailyUsage(session.userId);
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nPemakaian hari ini: ${usageNow}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
     const result = await pollForResult(chatId, taskId, session.apiKey);
