@@ -756,9 +756,9 @@ async function submitMotionControl(session) {
     triedKeys.add(apiKey);
     console.log(`[apimodels] Using key ...${apiKey.slice(-6)} (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
 
+    const proxyUrl = getNextProxy();
+    const proxyOpts = getStickyProxyAgent(proxyUrl);
     try {
-      const proxyUrl = getNextProxy();
-      const proxyOpts = getStickyProxyAgent(proxyUrl);
       const response = await axios.post(`${API_BASE}/video/generations`, body, {
         headers: {
           "Content-Type": "application/json",
