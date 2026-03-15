@@ -217,24 +217,18 @@ function getPublicFileUrl(filename) {
   return `http://localhost:${FILE_SERVER_PORT}/files/${filename}`;
 }
 
-const DAILY_LIMIT = 5;
+const COOLDOWN_MS = 10 * 60 * 1000;
+const userCooldowns = new Map();
 
-async function getDailyUsage(userId) {
-  if (!db) return 0;
-  const res = await db.query(
-    "SELECT count FROM daily_usage WHERE user_id = $1 AND usage_date = CURRENT_DATE",
-    [userId]
-  );
-  return res.rows.length > 0 ? res.rows[0].count : 0;
+function getCooldownRemaining(userId) {
+  const lastUsed = userCooldowns.get(userId);
+  if (!lastUsed) return 0;
+  const elapsed = Date.now() - lastUsed;
+  return Math.max(0, COOLDOWN_MS - elapsed);
 }
 
-async function incrementDailyUsage(userId) {
-  if (!db) return;
-  await db.query(
-    `INSERT INTO daily_usage (user_id, usage_date, count) VALUES ($1, CURRENT_DATE, 1)
-     ON CONFLICT (user_id, usage_date) DO UPDATE SET count = daily_usage.count + 1`,
-    [userId]
-  );
+function setCooldown(userId) {
+  userCooldowns.set(userId, Date.now());
 }
 
 async function downloadTelegramFile(fileId) {
@@ -573,7 +567,7 @@ bot.onText(/\/status/, async (msg) => {
     `Orientasi: ${session.orientation}`,
     `Kualitas: ${session.quality}`,
     `Generating: ${session.isGenerating ? "Ya" : "Tidak"}`,
-    `Pemakaian hari ini: ${session.userId ? await getDailyUsage(session.userId) : 0}/${DAILY_LIMIT}`,
+    `Cooldown: ${session.userId ? (() => { const r = getCooldownRemaining(session.userId); return r > 0 ? `${Math.ceil(r / 60000)} menit lagi` : "Siap generate"; })() : "N/A"}`,
   );
   bot.sendMessage(msg.chat.id, lines.join("\n"));
 });
@@ -918,24 +912,13 @@ bot.onText(/\/generate/, async (msg) => {
     return;
   }
 
-  try {
-    const usage = await getDailyUsage(session.userId);
-    if (usage >= DAILY_LIMIT) {
-      bot.sendMessage(chatId, `Limit harian tercapai (${usage}/${DAILY_LIMIT}). Coba lagi besok.`);
-      return;
-    }
-  } catch (err) {
-    console.error("Daily usage check error:", err.message);
-  }
-
-  if (session.lastGenerateTime) {
-    const cooldownMs = 10 * 60 * 1000;
-    const elapsed = Date.now() - session.lastGenerateTime;
-    if (elapsed < cooldownMs) {
-      const remaining = Math.ceil((cooldownMs - elapsed) / 1000);
-      bot.sendMessage(chatId, `Cooldown aktif. Tunggu ${remaining} detik lagi sebelum generate berikutnya.`);
-      return;
-    }
+  const cooldownLeft = getCooldownRemaining(session.userId);
+  if (cooldownLeft > 0) {
+    const minutesLeft = Math.ceil(cooldownLeft / 60000);
+    const secondsLeft = Math.ceil(cooldownLeft / 1000);
+    const timeText = minutesLeft >= 1 ? `${minutesLeft} menit` : `${secondsLeft} detik`;
+    bot.sendMessage(chatId, `Cooldown aktif. Tunggu ${timeText} lagi sebelum generate berikutnya.`);
+    return;
   }
 
   if (!session.imageFile) {
@@ -987,7 +970,6 @@ bot.on("callback_query", async (query) => {
   const quality = data === "quality_pro" ? "pro" : "std";
   session.quality = quality;
   session.isGenerating = true;
-  session.lastGenerateTime = Date.now();
 
   const qualityLabel = quality === "pro" ? "Pro (1080p)" : "Standard (720p)";
 
@@ -1010,9 +992,8 @@ bot.on("callback_query", async (query) => {
     }
 
     console.log(`[apimodels] Job ${taskId} submitted in ${submitTime}s`);
-    await incrementDailyUsage(session.userId);
-    const usageNow = await getDailyUsage(session.userId);
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nPemakaian hari ini: ${usageNow}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
+    setCooldown(session.userId);
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nCooldown: 10 menit\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
     const result = await pollForResult(chatId, taskId, session.apiKey, session.proxyUrl);
