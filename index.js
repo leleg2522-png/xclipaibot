@@ -22,16 +22,29 @@ if (RAILWAY_DB_URL) {
     .then(() => {
       console.log("Database Railway terhubung!");
       return db.query(`
-        CREATE TABLE IF NOT EXISTS daily_usage (
+        CREATE TABLE IF NOT EXISTS api_key_pool (
           id SERIAL PRIMARY KEY,
-          user_id INTEGER NOT NULL,
-          usage_date DATE NOT NULL DEFAULT CURRENT_DATE,
-          count INTEGER NOT NULL DEFAULT 0,
-          UNIQUE(user_id, usage_date)
+          api_key TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'available',
+          assigned_to INTEGER,
+          created_at TIMESTAMP DEFAULT NOW(),
+          dead_at TIMESTAMP
         )
       `);
     })
-    .then(() => console.log("daily_usage table ready"))
+    .then(() => {
+      console.log("api_key_pool table ready");
+      return db.query(`
+        CREATE TABLE IF NOT EXISTS user_api_keys (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          api_key TEXT NOT NULL,
+          assigned_at TIMESTAMP DEFAULT NOW(),
+          UNIQUE(user_id, api_key)
+        )
+      `);
+    })
+    .then(() => console.log("user_api_keys table ready"))
     .catch((err) => console.error("Database connection error:", err.message));
 } else {
   console.warn("RAILWAY_DATABASE_URL not set - login feature disabled");
@@ -42,15 +55,9 @@ if (!TELEGRAM_TOKEN) {
   process.exit(1);
 }
 
-const RAW_KEYS = process.env.FREEPIK_API_KEY || "";
-const API_KEYS = RAW_KEYS.split(",").map((k) => k.trim().replace(/[^\x20-\x7E]/g, "")).filter(Boolean);
-
-if (API_KEYS.length === 0) {
-  console.error("FREEPIK_API_KEY is not set (provide one or more keys separated by commas)");
-  process.exit(1);
-}
-
 const API_BASE = "https://api.freepik.com";
+const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || "").split(",").map(id => id.trim()).filter(Boolean);
+const KEYS_PER_USER = 3;
 
 const USE_PROXY = (process.env.USE_PROXY || "false").toLowerCase() === "true";
 const RAW_PROXIES = process.env.PROXY_LIST || "";
@@ -63,49 +70,124 @@ const PROXIES = RAW_PROXIES.split(",").map((p) => p.trim()).filter(Boolean).map(
   return p;
 });
 
-console.log(`Loaded ${API_KEYS.length} Freepik API key(s)`);
 console.log(`Loaded ${PROXIES.length} proxy(ies)`);
 
-let keyIndex = 0;
 let proxyIndex = 0;
-const keyFailures = {};
 const proxyFailures = {};
 const proxyLastUsed = {};
 const PROXY_MIN_INTERVAL = 5000;
 const lockedKeys = new Set();
 
-function getNextApiKey() {
-  const now = Date.now();
-  for (let i = 0; i < API_KEYS.length; i++) {
-    const idx = (keyIndex + i) % API_KEYS.length;
-    const key = API_KEYS[idx];
-    const failure = keyFailures[key];
-    if (failure && failure.until > now) continue;
-    if (lockedKeys.has(key)) continue;
-    keyIndex = (idx + 1) % API_KEYS.length;
-    return key;
-  }
-  for (let i = 0; i < API_KEYS.length; i++) {
-    const idx = (keyIndex + i) % API_KEYS.length;
-    const key = API_KEYS[idx];
-    const failure = keyFailures[key];
-    if (failure && failure.until > now) continue;
-    keyIndex = (idx + 1) % API_KEYS.length;
-    console.log(`All unlocked keys exhausted, reusing locked key ...${key.slice(-6)}`);
-    return key;
-  }
-  keyIndex = (keyIndex + 1) % API_KEYS.length;
-  return API_KEYS[keyIndex];
-}
-
 function lockKey(key) {
   lockedKeys.add(key);
-  console.log(`Key ...${key.slice(-6)} LOCKED for active task (${lockedKeys.size}/${API_KEYS.length} locked)`);
+  console.log(`Key ...${key.slice(-6)} LOCKED`);
 }
 
 function unlockKey(key) {
   lockedKeys.delete(key);
-  console.log(`Key ...${key.slice(-6)} UNLOCKED (${lockedKeys.size}/${API_KEYS.length} locked)`);
+  console.log(`Key ...${key.slice(-6)} UNLOCKED`);
+}
+
+async function getUserKeys(userId) {
+  if (!db) return [];
+  const result = await db.query(
+    "SELECT api_key FROM user_api_keys WHERE user_id = $1",
+    [userId]
+  );
+  return result.rows.map(r => r.api_key);
+}
+
+async function assignKeysToUser(userId) {
+  if (!db) return [];
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query(
+      "SELECT api_key FROM user_api_keys WHERE user_id = $1",
+      [userId]
+    );
+    if (existing.rows.length >= KEYS_PER_USER) {
+      await client.query("COMMIT");
+      return existing.rows.map(r => r.api_key);
+    }
+
+    const needed = KEYS_PER_USER - existing.rows.length;
+    const available = await client.query(
+      "SELECT api_key FROM api_key_pool WHERE status = 'available' ORDER BY created_at ASC LIMIT $1 FOR UPDATE SKIP LOCKED",
+      [needed]
+    );
+
+    for (const row of available.rows) {
+      await client.query(
+        "UPDATE api_key_pool SET status = 'assigned', assigned_to = $1 WHERE api_key = $2",
+        [userId, row.api_key]
+      );
+      await client.query(
+        "INSERT INTO user_api_keys (user_id, api_key) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [userId, row.api_key]
+      );
+      console.log(`[pool] Assigned key ...${row.api_key.slice(-6)} to user ${userId}`);
+    }
+
+    await client.query("COMMIT");
+    return await getUserKeys(userId);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[pool] assignKeysToUser error:", err.message);
+    return await getUserKeys(userId);
+  } finally {
+    client.release();
+  }
+}
+
+async function replaceDeadKey(userId, deadKey) {
+  if (!db) return null;
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "UPDATE api_key_pool SET status = 'dead', dead_at = NOW() WHERE api_key = $1",
+      [deadKey]
+    );
+    await client.query(
+      "DELETE FROM user_api_keys WHERE user_id = $1 AND api_key = $2",
+      [userId, deadKey]
+    );
+    console.log(`[pool] Key ...${deadKey.slice(-6)} marked dead for user ${userId}`);
+
+    const available = await client.query(
+      "SELECT api_key FROM api_key_pool WHERE status = 'available' ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED"
+    );
+
+    if (available.rows.length > 0) {
+      const newKey = available.rows[0].api_key;
+      await client.query(
+        "UPDATE api_key_pool SET status = 'assigned', assigned_to = $1 WHERE api_key = $2",
+        [userId, newKey]
+      );
+      await client.query(
+        "INSERT INTO user_api_keys (user_id, api_key) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [userId, newKey]
+      );
+      await client.query("COMMIT");
+      console.log(`[pool] Replaced with new key ...${newKey.slice(-6)} for user ${userId}`);
+      return newKey;
+    }
+
+    await client.query("COMMIT");
+    console.log(`[pool] No available keys to replace for user ${userId}`);
+    return null;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[pool] replaceDeadKey error:", err.message);
+    return null;
+  } finally {
+    client.release();
+  }
+}
+
+function isAdmin(msg) {
+  return ADMIN_IDS.includes(String(msg.from.id));
 }
 
 function getNextProxy() {
@@ -177,6 +259,8 @@ function markProxyFailed(proxyUrl, cooldownMs = 240000, banned = false) {
 function markProxyOk(proxyUrl) {
   delete proxyFailures[proxyUrl];
 }
+
+const keyFailures = {};
 
 function markKeyFailed(key, cooldownMs = 60000) {
   keyFailures[key] = { until: Date.now() + cooldownMs };
@@ -347,7 +431,7 @@ async function checkSubscription(userId) {
   if (!db) return { active: false, reason: "Database tidak tersedia." };
   try {
     const motionResult = await db.query(
-      `SELECT ms.id, ms.expired_at, ms.is_active, mr.name as room_name
+      `SELECT ms.id, ms.expired_at, ms.is_active, ms.created_at, mr.name as room_name
        FROM motion_subscriptions ms
        LEFT JOIN motion_rooms mr ON ms.motion_room_id = mr.id
        WHERE ms.user_id = $1 AND ms.is_active = true AND ms.expired_at > NOW()
@@ -356,6 +440,12 @@ async function checkSubscription(userId) {
     );
     if (motionResult.rows.length > 0) {
       const sub = motionResult.rows[0];
+      const createdAt = new Date(sub.created_at || sub.expired_at);
+      const expiredAt = new Date(sub.expired_at);
+      const durationDays = (expiredAt - createdAt) / (1000 * 60 * 60 * 24);
+      if (durationDays < 28) {
+        return { active: false, reason: "Bot ini hanya untuk langganan bulanan. Paket harian/mingguan tidak bisa menggunakan bot ini." };
+      }
       return {
         active: true,
         expiredAt: sub.expired_at,
@@ -364,7 +454,7 @@ async function checkSubscription(userId) {
     }
 
     const subResult = await db.query(
-      `SELECT s.id, s.expired_at, s.status, sp.name as plan_name
+      `SELECT s.id, s.expired_at, s.status, s.created_at, sp.name as plan_name, sp.duration_days
        FROM subscriptions s
        LEFT JOIN subscription_plans sp ON s.plan_id = sp.id
        WHERE s.user_id = $1 AND s.status = 'active' AND s.expired_at > NOW()
@@ -373,6 +463,14 @@ async function checkSubscription(userId) {
     );
     if (subResult.rows.length > 0) {
       const sub = subResult.rows[0];
+      const durationDays = sub.duration_days || (() => {
+        const createdAt = new Date(sub.created_at || sub.expired_at);
+        const expiredAt = new Date(sub.expired_at);
+        return (expiredAt - createdAt) / (1000 * 60 * 60 * 24);
+      })();
+      if (durationDays < 28) {
+        return { active: false, reason: "Bot ini hanya untuk langganan bulanan. Paket harian/mingguan tidak bisa menggunakan bot ini." };
+      }
       return {
         active: true,
         expiredAt: sub.expired_at,
@@ -380,7 +478,7 @@ async function checkSubscription(userId) {
       };
     }
 
-    return { active: false, reason: "Kamu belum punya langganan aktif. Hubungi admin untuk berlangganan." };
+    return { active: false, reason: "Kamu belum punya langganan bulanan aktif. Hubungi admin untuk berlangganan paket bulanan." };
   } catch (err) {
     console.error("Subscription check error:", err.message);
     return { active: false, reason: "Gagal mengecek langganan." };
@@ -445,7 +543,7 @@ Perintah:
 /reset - Reset session
 
 Catatan:
-• Harus login dan punya langganan Motion aktif
+• Harus login dan punya langganan bulanan aktif
 • Foto: min 300x300px, max 10MB (JPG/PNG/WEBP)
 • Video: durasi 3-30 detik, max 100MB (MP4/MOV/WEBM)
 • Orientasi "video" = max 30 detik, "image" = max 10 detik`
@@ -494,26 +592,26 @@ async function processLogin(chatId, msg, session, loginInput, password) {
 
     const subResult = await checkSubscription(authResult.userId);
 
+    if (!subResult.active) {
+      session.loginStep = null;
+      session.loginEmail = null;
+      bot.sendMessage(chatId, `Login ditolak.\n\n⚠️ ${subResult.reason}`);
+      return;
+    }
+
     session.loggedIn = true;
     session.userId = authResult.userId;
     session.username = authResult.username;
     session.loginStep = null;
     session.loginEmail = null;
 
-    if (subResult.active) {
-      const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
-        day: "numeric", month: "long", year: "numeric",
-      });
-      bot.sendMessage(
-        chatId,
-        `Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan: ${subResult.planName} (Aktif)\nBerlaku sampai: ${expDate}\n\nSilakan kirim foto dan video, lalu ketik /generate.`
-      );
-    } else {
-      bot.sendMessage(
-        chatId,
-        `Login berhasil! Selamat datang, ${authResult.username}.\n\n⚠️ ${subResult.reason}`
-      );
-    }
+    const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
+      day: "numeric", month: "long", year: "numeric",
+    });
+    bot.sendMessage(
+      chatId,
+      `Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan: ${subResult.planName} (Aktif)\nBerlaku sampai: ${expDate}\n\nSilakan kirim foto dan video, lalu ketik /generate.`
+    );
   } catch (err) {
     console.error("Login error:", err);
     bot.sendMessage(chatId, "Terjadi kesalahan saat login. Coba lagi nanti.");
@@ -611,6 +709,68 @@ bot.onText(/\/quality (std|pro)/, (msg, match) => {
   session.quality = match[1];
   const label = match[1] === "pro" ? "Pro (1080p)" : "Standard (720p)";
   bot.sendMessage(msg.chat.id, `Kualitas diset: ${label}`);
+});
+
+bot.onText(/\/addkeys(.*)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(msg)) {
+    bot.sendMessage(chatId, "Hanya admin yang bisa menggunakan perintah ini.");
+    return;
+  }
+  const input = (match[1] || "").trim();
+  if (!input) {
+    bot.sendMessage(chatId, "Format: /addkeys key1,key2,key3,...");
+    return;
+  }
+  const keys = input.split(",").map(k => k.trim()).filter(Boolean);
+  if (keys.length === 0) {
+    bot.sendMessage(chatId, "Tidak ada key yang valid.");
+    return;
+  }
+  let added = 0;
+  let duplicate = 0;
+  for (const key of keys) {
+    try {
+      const res = await db.query(
+        "INSERT INTO api_key_pool (api_key, status) VALUES ($1, 'available') ON CONFLICT (api_key) DO NOTHING RETURNING api_key",
+        [key]
+      );
+      if (res.rowCount > 0) added++;
+      else duplicate++;
+    } catch (err) {
+      duplicate++;
+    }
+  }
+  bot.sendMessage(chatId, `Berhasil menambahkan ${added} key baru ke pool.${duplicate > 0 ? `\n${duplicate} key sudah ada/duplikat.` : ""}`);
+});
+
+bot.onText(/\/poolstatus/, async (msg) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(msg)) {
+    bot.sendMessage(chatId, "Hanya admin yang bisa menggunakan perintah ini.");
+    return;
+  }
+  try {
+    const total = await db.query("SELECT COUNT(*) as count FROM api_key_pool");
+    const available = await db.query("SELECT COUNT(*) as count FROM api_key_pool WHERE status = 'available'");
+    const assigned = await db.query("SELECT COUNT(*) as count FROM api_key_pool WHERE status = 'assigned'");
+    const dead = await db.query("SELECT COUNT(*) as count FROM api_key_pool WHERE status = 'dead'");
+    const users = await db.query("SELECT COUNT(DISTINCT user_id) as count FROM user_api_keys");
+
+    bot.sendMessage(chatId,
+      `📊 Pool Status:\n\n` +
+      `Total key: ${total.rows[0].count}\n` +
+      `Tersedia: ${available.rows[0].count}\n` +
+      `Terpakai: ${assigned.rows[0].count}\n` +
+      `Mati: ${dead.rows[0].count}\n` +
+      `User dengan key: ${users.rows[0].count}\n` +
+      `Key per user: ${KEYS_PER_USER}\n` +
+      `Kapasitas user: ${Math.floor(available.rows[0].count / KEYS_PER_USER)} user lagi`
+    );
+  } catch (err) {
+    console.error("Pool status error:", err.message);
+    bot.sendMessage(chatId, "Gagal mengambil status pool.");
+  }
 });
 
 bot.on("photo", async (msg) => {
@@ -740,14 +900,28 @@ async function submitMotionControl(session) {
     body.prompt = session.prompt;
   }
 
+  const userKeys = await assignKeysToUser(session.userId);
+  if (userKeys.length === 0) {
+    throw new Error("Tidak ada API key tersedia. Hubungi admin.");
+  }
+
+  console.log(`[freepik] User ${session.userId} has ${userKeys.length} keys`);
+
   const triedKeys = new Set();
   let lastError = null;
 
-  for (let keyAttempt = 0; keyAttempt < API_KEYS.length; keyAttempt++) {
-    const apiKey = getNextApiKey();
+  for (const apiKey of userKeys) {
     if (triedKeys.has(apiKey)) continue;
     triedKeys.add(apiKey);
-    console.log(`[freepik] Using key ...${apiKey.slice(-6)} (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
+
+    const now = Date.now();
+    const failure = keyFailures[apiKey];
+    if (failure && failure.until > now) {
+      console.log(`[freepik] Key ...${apiKey.slice(-6)} on cooldown, skipping`);
+      continue;
+    }
+
+    console.log(`[freepik] Using key ...${apiKey.slice(-6)}`);
 
     const proxyUrl = getNextProxy();
     const proxyOpts = getStickyProxyAgent(proxyUrl);
@@ -775,7 +949,7 @@ async function submitMotionControl(session) {
 
       if (proxyUrl && (status === 407 || status === 502 || status === 503 || err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT")) {
         markProxyFailed(proxyUrl, 240000, status === 407);
-        console.log(`[freepik] Proxy error, retrying with next key/proxy...`);
+        console.log(`[freepik] Proxy error, retrying with next key...`);
         continue;
       }
 
@@ -786,14 +960,14 @@ async function submitMotionControl(session) {
       }
 
       if (status === 401) {
-        markKeyFailed(apiKey, 86400000);
-        console.log(`[freepik] Key ...${apiKey.slice(-6)} invalid, disabled 24h`);
+        console.log(`[freepik] Key ...${apiKey.slice(-6)} invalid, replacing...`);
+        await replaceDeadKey(session.userId, apiKey);
         continue;
       }
 
       if (status === 402 || status === 403) {
-        markKeyFailed(apiKey, 86400000);
-        console.log(`[freepik] Key ...${apiKey.slice(-6)} no balance/forbidden, disabled 24h`);
+        console.log(`[freepik] Key ...${apiKey.slice(-6)} no balance/forbidden, replacing...`);
+        await replaceDeadKey(session.userId, apiKey);
         continue;
       }
 
@@ -803,22 +977,24 @@ async function submitMotionControl(session) {
 
   if (USE_PROXY && lastError) {
     console.log("[freepik] All keys with proxy failed, retrying without proxy...");
-    const apiKey = getNextApiKey();
-    try {
-      const response = await axios.post(`${API_BASE}${endpoint}`, body, {
-        headers: {
-          "Content-Type": "application/json",
-          "x-freepik-api-key": apiKey,
-        },
-        timeout: 30000,
-      });
-      markKeyOk(apiKey);
-      lockKey(apiKey);
-      session.apiKey = apiKey;
-      session.proxyUrl = null;
-      return response.data;
-    } catch (err) {
-      lastError = err;
+    const retryKeys = await getUserKeys(session.userId);
+    for (const apiKey of retryKeys) {
+      try {
+        const response = await axios.post(`${API_BASE}${endpoint}`, body, {
+          headers: {
+            "Content-Type": "application/json",
+            "x-freepik-api-key": apiKey,
+          },
+          timeout: 30000,
+        });
+        markKeyOk(apiKey);
+        lockKey(apiKey);
+        session.apiKey = apiKey;
+        session.proxyUrl = null;
+        return response.data;
+      } catch (err) {
+        lastError = err;
+      }
     }
   }
 
@@ -827,13 +1003,13 @@ async function submitMotionControl(session) {
 }
 
 async function checkTaskStatus(taskId, apiKey, proxyUrl) {
-  const key = apiKey || getNextApiKey();
+  if (!apiKey) throw new Error("API key is required for polling");
   const url = `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`;
   const proxyOpts = getStickyProxyAgent(proxyUrl);
 
   const response = await axios.get(url, {
     headers: {
-      "x-freepik-api-key": key,
+      "x-freepik-api-key": apiKey,
     },
     timeout: 15000,
     ...proxyOpts,
@@ -1072,3 +1248,5 @@ bot.on("polling_error", (err) => {
 });
 
 console.log("Bot Telegram Kling Motion Control (Freepik API) sudah berjalan!");
+console.log(`Admin IDs: ${ADMIN_IDS.length > 0 ? ADMIN_IDS.join(", ") : "(tidak diset - /addkeys dan /poolstatus tidak bisa diakses)"}`);
+console.log(`Keys per user: ${KEYS_PER_USER}`);

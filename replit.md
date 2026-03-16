@@ -1,7 +1,7 @@
 # Telegram Bot - Kling Motion Control (Freepik API)
 
 ## Overview
-Telegram bot that generates motion control videos using Freepik's API for Kling 2.6 Motion Control. The bot transfers motion from a reference video to a character image. Users must login with their xclip account and have an active Motion Control subscription.
+Telegram bot that generates motion control videos using Freepik's API for Kling 2.6 Motion Control. The bot transfers motion from a reference video to a character image. Only users with active monthly subscriptions can access the bot.
 
 ## Architecture
 - **Runtime**: Node.js 20
@@ -9,26 +9,42 @@ Telegram bot that generates motion control videos using Freepik's API for Kling 
 - **Dependencies**: `node-telegram-bot-api`, `axios`, `express`, `pg`, `bcryptjs`, `https-proxy-agent`
 - **Workflow**: "Telegram Bot" runs `node index.js`
 - **File server**: Express serves uploaded files on configurable port (default 3000)
-- **Database**: PostgreSQL on Railway (user accounts, motion subscriptions)
+- **Database**: PostgreSQL on Railway (user accounts, subscriptions, API key pool)
 - **API Provider**: Freepik API (Kling 2.6 Motion Control)
 
 ## How It Works
 1. User logs in with `/login username password` (verified against Railway PostgreSQL)
-2. Bot checks `motion_subscriptions` table for active subscription
-3. User sends a character image via Telegram
-4. User sends a reference motion video
-5. Bot downloads files locally and serves them via public URL
-6. User selects quality (Standard or Pro)
-7. Bot submits job to Freepik API
-8. Bot polls for job completion and sends the resulting video back
+2. Bot checks subscription: must be monthly (28+ days), active, not expired
+3. If no monthly subscription → login rejected
+4. User sends a character image via Telegram
+5. User sends a reference motion video
+6. Bot downloads files locally and serves them via public URL
+7. User selects quality (Standard or Pro)
+8. Bot assigns 3 API keys from pool to user (if not already assigned)
+9. Bot submits job to Freepik API using user's keys
+10. Bot polls for job completion and sends the resulting video back
 
-## Database Integration
-- **Connection**: Railway PostgreSQL via `RAILWAY_DATABASE_URL`
-- **Tables used**:
-  - `users` — username, email, password_hash (bcrypt)
-  - `motion_subscriptions` — user_id, motion_room_id, expired_at, is_active
-  - `motion_rooms` — room name and capacity
-- **Auth flow**: bcrypt password comparison, subscription expiry check
+## Database Tables
+- **users** — username, email, password_hash (bcrypt)
+- **motion_subscriptions** — user_id, motion_room_id, expired_at, is_active
+- **motion_rooms** — room name and capacity
+- **subscriptions** — user_id, plan_id, expired_at, status
+- **subscription_plans** — plan name, duration_days
+- **api_key_pool** — api_key, status (available/assigned/dead), assigned_to, created_at, dead_at
+- **user_api_keys** — user_id, api_key, assigned_at
+
+## Per-User API Key Pool System
+- Admin adds Freepik API keys to pool via `/addkeys key1,key2,...`
+- Each user gets 3 dedicated keys assigned on first generate
+- Keys stay with the user as long as they work
+- If a key dies (402/403 error) → auto-replaced from pool
+- If a key hits rate limit (429) → rotate to next user key, 5min cooldown
+- Admin monitors with `/poolstatus`
+
+## Subscription Enforcement
+- Only monthly subscriptions (28+ days duration) are accepted
+- Daily/weekly plans are rejected at login
+- Subscription checked again at generate time
 
 ## Freepik API Integration
 - **Submit Job (Pro)**: `POST https://api.freepik.com/v1/ai/video/kling-v2-6-motion-control-pro`
@@ -38,37 +54,35 @@ Telegram bot that generates motion control videos using Freepik's API for Kling 
 - **Request body**: `{ image_url, video_url, character_orientation, cfg_scale, prompt }`
 - **Response**: `{ data: { task_id, status, generated: [...] } }`
 
-## Multi-API Key System
-- `FREEPIK_API_KEY` supports comma-separated keys for parallel tasks
-- Each active task locks one key exclusively (1 task = 1 key)
-- Keys auto-unlock when task completes, fails, or times out
-- Failed keys get cooldown (429→5min, 401/402/403→24h)
-
 ## Cooldown System
 - 10-minute cooldown between generates per user (no daily limit)
 - Tracked in-memory via Map
 
 ## Proxy Infrastructure (Optional)
 - `PROXY_LIST` supports comma-separated proxies (format: `host:port:user:pass`)
-- `USE_PROXY` flag to enable/disable proxy (default: true)
+- `USE_PROXY` flag to enable/disable proxy
 - Proxies rotate with least-recently-used algorithm
-- Blocked proxies get 2-hour cooldown
 
 ## Environment Variables (Secrets)
 - `TELEGRAM_BOT_TOKEN` — Telegram bot token from @BotFather
-- `FREEPIK_API_KEY` — Comma-separated Freepik API keys
-- `RAILWAY_DATABASE_URL` — PostgreSQL connection string for user auth
+- `ADMIN_TELEGRAM_IDS` — Comma-separated Telegram user IDs for admin access
+- `RAILWAY_DATABASE_URL` — PostgreSQL connection string for user auth & key pool
 - `PROXY_LIST` — (optional) Comma-separated proxies (host:port:user:pass)
 - `USE_PROXY` — (optional) Enable/disable proxy (true/false)
 - `PORT` — (optional) Port for Express file server, defaults to 3000
 
 ## Bot Commands
+### User Commands
 - `/start` — Show usage guide
-- `/login username password` — Login with xclip account
+- `/login username password` — Login (requires monthly subscription)
 - `/logout` — Logout
-- `/generate` — Generate motion control video (select quality)
+- `/generate` — Generate motion control video
 - `/prompt [text]` — Set optional text prompt
 - `/orientation [video|image]` — Set character orientation
 - `/quality [std|pro]` — Set quality tier
-- `/status` — Check current session (includes subscription info, cooldown)
+- `/status` — Check current session
 - `/reset` — Reset session
+
+### Admin Commands
+- `/addkeys key1,key2,...` — Add Freepik API keys to pool
+- `/poolstatus` — View pool statistics
