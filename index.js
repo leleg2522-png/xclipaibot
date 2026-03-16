@@ -42,15 +42,15 @@ if (!TELEGRAM_TOKEN) {
   process.exit(1);
 }
 
-const RAW_KEYS = process.env.APIMODELS_API_KEY || process.env.GLIO_API_KEY || "";
+const RAW_KEYS = process.env.FREEPIK_API_KEY || "";
 const API_KEYS = RAW_KEYS.split(",").map((k) => k.trim().replace(/[^\x20-\x7E]/g, "")).filter(Boolean);
 
 if (API_KEYS.length === 0) {
-  console.error("APIMODELS_API_KEY is not set (provide one or more keys separated by commas)");
+  console.error("FREEPIK_API_KEY is not set (provide one or more keys separated by commas)");
   process.exit(1);
 }
 
-const API_BASE = "https://apimodels.app/api/v1";
+const API_BASE = "https://api.freepik.com";
 
 const USE_PROXY = (process.env.USE_PROXY || "false").toLowerCase() === "true";
 const RAW_PROXIES = process.env.PROXY_LIST || "";
@@ -63,7 +63,7 @@ const PROXIES = RAW_PROXIES.split(",").map((p) => p.trim()).filter(Boolean).map(
   return p;
 });
 
-console.log(`Loaded ${API_KEYS.length} apimodels.app API key(s)`);
+console.log(`Loaded ${API_KEYS.length} Freepik API key(s)`);
 console.log(`Loaded ${PROXIES.length} proxy(ies)`);
 
 let keyIndex = 0;
@@ -719,22 +719,21 @@ bot.on("document", async (msg) => {
 });
 
 async function submitMotionControl(session) {
-  const modelName = "kling-2.6/motion-control";
-  const mode = session.quality === "pro" ? "1080p" : "720p";
+  const quality = session.quality === "pro" ? "pro" : "std";
+  const endpoint = `/v1/ai/video/kling-v2-6-motion-control-${quality}`;
 
   const imageUrl = session.imageFile.publicUrl;
   const videoUrl = session.videoFile.publicUrl;
 
-  console.log(`[apimodels] Submit model=${modelName} mode=${mode}`);
-  console.log(`[apimodels] image_url: ${imageUrl}`);
-  console.log(`[apimodels] video_url: ${videoUrl}`);
+  console.log(`[freepik] Submit endpoint=${endpoint}`);
+  console.log(`[freepik] image_url: ${imageUrl}`);
+  console.log(`[freepik] video_url: ${videoUrl}`);
 
   const body = {
-    model: modelName,
-    input_urls: [imageUrl],
-    video_urls: [videoUrl],
-    mode: mode,
-    character_orientation: session.orientation,
+    image_url: imageUrl,
+    video_url: videoUrl,
+    character_orientation: session.orientation || "video",
+    cfg_scale: 0.5,
   };
 
   if (session.prompt) {
@@ -748,15 +747,15 @@ async function submitMotionControl(session) {
     const apiKey = getNextApiKey();
     if (triedKeys.has(apiKey)) continue;
     triedKeys.add(apiKey);
-    console.log(`[apimodels] Using key ...${apiKey.slice(-6)} (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
+    console.log(`[freepik] Using key ...${apiKey.slice(-6)} (attempt ${keyAttempt + 1}/${API_KEYS.length})`);
 
     const proxyUrl = getNextProxy();
     const proxyOpts = getStickyProxyAgent(proxyUrl);
     try {
-      const response = await axios.post(`${API_BASE}/video/generations`, body, {
+      const response = await axios.post(`${API_BASE}${endpoint}`, body, {
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
+          "x-freepik-api-key": apiKey,
         },
         timeout: 30000,
         ...proxyOpts,
@@ -772,29 +771,29 @@ async function submitMotionControl(session) {
       const msg = err.response?.data?.message || err.response?.data?.detail || err.message;
       lastError = err;
 
-      console.log(`[apimodels] Submit error: ${status} - ${msg}`);
+      console.log(`[freepik] Submit error: ${status} - ${msg}`);
 
       if (proxyUrl && (status === 407 || status === 502 || status === 503 || err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT")) {
         markProxyFailed(proxyUrl, 240000, status === 407);
-        console.log(`[apimodels] Proxy error, retrying with next key/proxy...`);
+        console.log(`[freepik] Proxy error, retrying with next key/proxy...`);
         continue;
       }
 
       if (status === 429) {
         markKeyFailed(apiKey, 300000);
-        console.log(`[apimodels] Key ...${apiKey.slice(-6)} rate limited, cooldown 5min`);
+        console.log(`[freepik] Key ...${apiKey.slice(-6)} rate limited, cooldown 5min`);
         continue;
       }
 
       if (status === 401) {
         markKeyFailed(apiKey, 86400000);
-        console.log(`[apimodels] Key ...${apiKey.slice(-6)} invalid, disabled 24h`);
+        console.log(`[freepik] Key ...${apiKey.slice(-6)} invalid, disabled 24h`);
         continue;
       }
 
       if (status === 402 || status === 403) {
         markKeyFailed(apiKey, 86400000);
-        console.log(`[apimodels] Key ...${apiKey.slice(-6)} no balance/forbidden, disabled 24h`);
+        console.log(`[freepik] Key ...${apiKey.slice(-6)} no balance/forbidden, disabled 24h`);
         continue;
       }
 
@@ -803,13 +802,13 @@ async function submitMotionControl(session) {
   }
 
   if (USE_PROXY && lastError) {
-    console.log("[apimodels] All keys with proxy failed, retrying without proxy...");
+    console.log("[freepik] All keys with proxy failed, retrying without proxy...");
     const apiKey = getNextApiKey();
     try {
-      const response = await axios.post(`${API_BASE}/video/generations`, body, {
+      const response = await axios.post(`${API_BASE}${endpoint}`, body, {
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
+          "x-freepik-api-key": apiKey,
         },
         timeout: 30000,
       });
@@ -829,12 +828,12 @@ async function submitMotionControl(session) {
 
 async function checkTaskStatus(taskId, apiKey, proxyUrl) {
   const key = apiKey || getNextApiKey();
-  const url = `${API_BASE}/video/generations?task_id=${taskId}`;
+  const url = `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`;
   const proxyOpts = getStickyProxyAgent(proxyUrl);
 
   const response = await axios.get(url, {
     headers: {
-      "Authorization": `Bearer ${key}`,
+      "x-freepik-api-key": key,
     },
     timeout: 15000,
     ...proxyOpts,
@@ -862,15 +861,15 @@ async function pollForResult(chatId, taskId, apiKey, proxyUrl) {
     try {
       const rawResult = await checkTaskStatus(taskId, apiKey, proxyUrl);
       const result = rawResult?.data || rawResult;
-      const status = result?.status;
-      console.log(`[apimodels] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
+      const status = (result?.status || "").toUpperCase();
+      console.log(`[freepik] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
       consecutiveErrors = 0;
 
-      if (status === "completed") {
-        console.log("[apimodels] Task completed! Full response:", JSON.stringify(rawResult));
+      if (status === "COMPLETED") {
+        console.log("[freepik] Task completed! Full response:", JSON.stringify(rawResult));
         return result;
-      } else if (status === "failed" || status === "error") {
-        console.log("[apimodels] Task failed! Full response:", JSON.stringify(rawResult));
+      } else if (status === "FAILED" || status === "ERROR") {
+        console.log("[freepik] Task failed! Full response:", JSON.stringify(rawResult));
         return result;
       }
 
@@ -879,11 +878,11 @@ async function pollForResult(chatId, taskId, apiKey, proxyUrl) {
         bot.sendMessage(chatId, `Masih memproses... (${elapsed} detik)`);
       }
     } catch (err) {
-      console.error(`[apimodels] Poll #${i + 1} error:`, err.response?.status, err.response?.data || err.message);
+      console.error(`[freepik] Poll #${i + 1} error:`, err.response?.status, err.response?.data || err.message);
       consecutiveErrors++;
 
       if (consecutiveErrors >= 5) {
-        console.log("[apimodels] 5 consecutive poll errors, continuing...");
+        console.log("[freepik] 5 consecutive poll errors, continuing...");
         consecutiveErrors = 0;
       }
     }
@@ -980,25 +979,25 @@ bot.on("callback_query", async (query) => {
     const submitStart = Date.now();
     const submitResult = await submitMotionControl(session);
     const submitTime = ((Date.now() - submitStart) / 1000).toFixed(1);
-    console.log("[apimodels] Full submit response:", JSON.stringify(submitResult));
+    console.log("[freepik] Full submit response:", JSON.stringify(submitResult));
     const taskId = submitResult?.data?.task_id || submitResult?.task_id || submitResult?.id;
 
     if (!taskId) {
-      console.error("[apimodels] No task_id in response:", JSON.stringify(submitResult));
+      console.error("[freepik] No task_id in response:", JSON.stringify(submitResult));
       bot.sendMessage(chatId, "Gagal submit task. Response tidak valid dari API.");
       if (session.apiKey) unlockKey(session.apiKey);
       session.isGenerating = false;
       return;
     }
 
-    console.log(`[apimodels] Job ${taskId} submitted in ${submitTime}s`);
+    console.log(`[freepik] Job ${taskId} submitted in ${submitTime}s`);
     setCooldown(session.userId);
     bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nCooldown: 10 menit\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
     const result = await pollForResult(chatId, taskId, session.apiKey, session.proxyUrl);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
-    console.log(`[apimodels] Job ${taskId} polling finished in ${pollTime}s`);
+    console.log(`[freepik] Job ${taskId} polling finished in ${pollTime}s`);
 
     if (!result) {
       bot.sendMessage(chatId, "Timeout: Video belum selesai setelah 20 menit. Coba lagi nanti.");
@@ -1007,17 +1006,18 @@ bot.on("callback_query", async (query) => {
       return;
     }
 
-    const jobStatus = result?.status;
+    const jobStatus = (result?.status || "").toUpperCase();
 
-    if (jobStatus === "completed") {
-      console.log("[apimodels] Full completed result:", JSON.stringify(result));
+    if (jobStatus === "COMPLETED") {
+      console.log("[freepik] Full completed result:", JSON.stringify(result));
 
-      const videoUrls = Array.isArray(result.videos)
-        ? result.videos.filter(u => typeof u === "string" && u.startsWith("http"))
+      const generated = result.generated || result.videos || [];
+      const videoUrls = Array.isArray(generated)
+        ? generated.filter(u => typeof u === "string" && u.startsWith("http"))
         : [];
 
       const uniqueUrls = [...new Set(videoUrls)];
-      console.log("[apimodels] Extracted video URLs:", uniqueUrls);
+      console.log("[freepik] Extracted video URLs:", uniqueUrls);
 
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
@@ -1048,7 +1048,7 @@ bot.on("callback_query", async (query) => {
           }
         }
       } else {
-        console.log("[apimodels] No video URLs found. Full response:", JSON.stringify(result));
+        console.log("[freepik] No video URLs found. Full response:", JSON.stringify(result));
         bot.sendMessage(chatId, `Video selesai tapi URL tidak ditemukan.\n\nDebug: ${JSON.stringify(result).substring(0, 500)}`);
       }
     } else {
@@ -1059,7 +1059,7 @@ bot.on("callback_query", async (query) => {
     if (session.apiKey) unlockKey(session.apiKey);
     resetSession(msg);
   } catch (err) {
-    console.error("[apimodels] Generate error:", err.response?.data || err.message);
+    console.error("[freepik] Generate error:", err.response?.data || err.message);
     const errorMsg = err.response?.data?.message || err.response?.data?.detail || err.response?.data?.error || err.message;
     bot.sendMessage(chatId, `Error: ${errorMsg}`);
     if (session.apiKey) unlockKey(session.apiKey);
@@ -1071,4 +1071,4 @@ bot.on("polling_error", (err) => {
   console.error("Polling error:", err.code, err.message);
 });
 
-console.log("Bot Telegram Kling Motion Control (apimodels.app) sudah berjalan!");
+console.log("Bot Telegram Kling Motion Control (Freepik API) sudah berjalan!");
