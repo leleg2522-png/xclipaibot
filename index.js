@@ -150,9 +150,9 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
       const isBlocked = status === 403 || status === 407 || status === 502 || status === 503;
 
       if (isSocketErr || isBlocked) {
-        console.log(`[PROXY] ${isSocketErr ? 'Socket error' : 'Blocked'}, rotating IP...`);
+        console.log(`[PROXY] ${isSocketErr ? 'Socket error' : `Blocked (${status})`}, rotating IP...`);
         proxyIndex++;
-        await sleep(1500);
+        await sleep(3000 + attempt * 1000);
         continue;
       }
 
