@@ -81,16 +81,11 @@ function initProxy() {
 
 initProxy();
 
-function buildProxyUrl(proxy, sessionId = null) {
+function buildProxyUrl(proxy) {
   if (proxy.username && proxy.password) {
-    const user = sessionId ? `${proxy.username}-session-${sessionId}` : proxy.username;
-    return `http://${user}:${proxy.password}@${proxy.host}:${proxy.port}`;
+    return `http://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`;
   }
   return `http://${proxy.host}:${proxy.port}`;
-}
-
-function generateSessionId() {
-  return `s${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function freepikHeaders(apiKey) {
@@ -119,7 +114,7 @@ function randomDelay(baseMs, jitterMs) {
   return baseMs + Math.floor(Math.random() * jitterMs);
 }
 
-async function makeFreepikRequest(method, url, apiKey, body = null, sessionId = null) {
+async function makeFreepikRequest(method, url, apiKey, body = null) {
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   if (VPS_PROXIES.length === 0) {
@@ -131,11 +126,10 @@ async function makeFreepikRequest(method, url, apiKey, body = null, sessionId = 
   let attempt = 0;
   let proxyIndex = 0;
   const maxAttempts = 15;
-  let currentSid = sessionId || generateSessionId();
 
   while (attempt < maxAttempts) {
     const proxy = VPS_PROXIES[proxyIndex % VPS_PROXIES.length];
-    const proxyUrl = buildProxyUrl(proxy, currentSid);
+    const proxyUrl = buildProxyUrl(proxy);
 
     const config = {
       method,
@@ -148,18 +142,16 @@ async function makeFreepikRequest(method, url, apiKey, body = null, sessionId = 
     if (body) config.data = body;
 
     attempt++;
-    console.log(`[PROXY] Attempt ${attempt}/${maxAttempts} session=${currentSid} via ${proxy.host}:${proxy.port}`);
+    console.log(`[PROXY] Attempt ${attempt}/${maxAttempts} via ${proxy.host}:${proxy.port}`);
 
     try {
       const resp = await axios(config);
       if (typeof resp.data === 'string' && resp.data.includes('Access denied')) {
         throw new Error('Blocked by Freepik');
       }
-      resp._proxySessionId = currentSid;
       return resp;
     } catch (err) {
       const status = err.response?.status;
-      const respBody = err.response?.data;
 
       if (status === 429) throw err;
       if (status === 401 && isFreepikApiError(err)) throw err;
@@ -175,12 +167,10 @@ async function makeFreepikRequest(method, url, apiKey, body = null, sessionId = 
                            status === 522 || status === 524;
 
       if (isSocketErr || isProxyBlock) {
-        const oldSid = currentSid;
-        currentSid = generateSessionId();
         const reason = isSocketErr ? `Socket error (${err.code || errMsg.substring(0, 30)})` : `HTTP ${status}`;
-        console.log(`[PROXY] ${reason}, new session ${currentSid} (was ${oldSid}), wait ${Math.round((5000 + attempt * 2000) / 1000)}s`);
+        console.log(`[PROXY] ${reason}, rotating IP... (wait ${Math.round(randomDelay(2000, 2000) / 1000)}s)`);
         proxyIndex++;
-        await sleep(randomDelay(5000 + attempt * 2000, 3000));
+        await sleep(randomDelay(2000, 2000));
         continue;
       }
 
@@ -996,8 +986,6 @@ async function submitMotionControl(session) {
       markKeyOk(apiKey);
       lockKey(apiKey);
       session.apiKey = apiKey;
-      session.proxySessionId = response._proxySessionId || null;
-      console.log(`[freepik] Submit success, proxy session: ${session.proxySessionId}`);
       return response.data;
     } catch (err) {
       const status = err.response?.status;
@@ -1032,14 +1020,14 @@ async function submitMotionControl(session) {
   throw new Error("Semua API key tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey, sessionId = null) {
+async function checkTaskStatus(taskId, apiKey) {
   if (!apiKey) throw new Error("API key is required for polling");
   const url = `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`;
-  const response = await makeFreepikRequest('GET', url, apiKey, null, sessionId);
+  const response = await makeFreepikRequest('GET', url, apiKey);
   return response.data;
 }
 
-async function pollForResult(chatId, taskId, apiKey, sessionId = null) {
+async function pollForResult(chatId, taskId, apiKey) {
   const maxAttempts = 80;
   let consecutiveErrors = 0;
   let totalWaitMs = 0;
@@ -1056,7 +1044,7 @@ async function pollForResult(chatId, taskId, apiKey, sessionId = null) {
     totalWaitMs += intervalMs;
 
     try {
-      const rawResult = await checkTaskStatus(taskId, apiKey, sessionId);
+      const rawResult = await checkTaskStatus(taskId, apiKey);
       const result = rawResult?.data || rawResult;
       const status = (result?.status || "").toUpperCase();
       console.log(`[freepik] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
@@ -1200,7 +1188,7 @@ bot.on("callback_query", async (query) => {
     bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nCooldown: 10 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
-    const result = await pollForResult(chatId, taskId, session.apiKey, session.proxySessionId);
+    const result = await pollForResult(chatId, taskId, session.apiKey);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
     console.log(`[freepik] Job ${taskId} polling finished in ${pollTime}s`);
 
