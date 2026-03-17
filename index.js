@@ -81,11 +81,16 @@ function initProxy() {
 
 initProxy();
 
-function buildProxyUrl(proxy) {
+function buildProxyUrl(proxy, sessionId = null) {
   if (proxy.username && proxy.password) {
-    return `http://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`;
+    const user = sessionId ? `${proxy.username}-session-${sessionId}` : proxy.username;
+    return `http://${user}:${proxy.password}@${proxy.host}:${proxy.port}`;
   }
   return `http://${proxy.host}:${proxy.port}`;
+}
+
+function generateSessionId() {
+  return `s${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function freepikHeaders(apiKey) {
@@ -114,7 +119,7 @@ function randomDelay(baseMs, jitterMs) {
   return baseMs + Math.floor(Math.random() * jitterMs);
 }
 
-async function makeFreepikRequest(method, url, apiKey, body = null) {
+async function makeFreepikRequest(method, url, apiKey, body = null, sessionId = null) {
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   if (VPS_PROXIES.length === 0) {
@@ -126,10 +131,11 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
   let attempt = 0;
   let proxyIndex = 0;
   const maxAttempts = 15;
+  const sid = sessionId || generateSessionId();
 
   while (attempt < maxAttempts) {
     const proxy = VPS_PROXIES[proxyIndex % VPS_PROXIES.length];
-    const proxyUrl = buildProxyUrl(proxy);
+    const proxyUrl = buildProxyUrl(proxy, sid);
 
     const config = {
       method,
@@ -149,6 +155,7 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
       if (typeof resp.data === 'string' && resp.data.includes('Access denied')) {
         throw new Error('Blocked by Freepik');
       }
+      resp._proxySessionId = sid;
       return resp;
     } catch (err) {
       const status = err.response?.status;
@@ -987,6 +994,8 @@ async function submitMotionControl(session) {
       markKeyOk(apiKey);
       lockKey(apiKey);
       session.apiKey = apiKey;
+      session.proxySessionId = response._proxySessionId || null;
+      console.log(`[freepik] Submit success, proxy session: ${session.proxySessionId}`);
       return response.data;
     } catch (err) {
       const status = err.response?.status;
@@ -1021,14 +1030,14 @@ async function submitMotionControl(session) {
   throw new Error("Semua API key tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey) {
+async function checkTaskStatus(taskId, apiKey, sessionId = null) {
   if (!apiKey) throw new Error("API key is required for polling");
   const url = `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`;
-  const response = await makeFreepikRequest('GET', url, apiKey);
+  const response = await makeFreepikRequest('GET', url, apiKey, null, sessionId);
   return response.data;
 }
 
-async function pollForResult(chatId, taskId, apiKey) {
+async function pollForResult(chatId, taskId, apiKey, sessionId = null) {
   const maxAttempts = 80;
   let consecutiveErrors = 0;
   let totalWaitMs = 0;
@@ -1045,7 +1054,7 @@ async function pollForResult(chatId, taskId, apiKey) {
     totalWaitMs += intervalMs;
 
     try {
-      const rawResult = await checkTaskStatus(taskId, apiKey);
+      const rawResult = await checkTaskStatus(taskId, apiKey, sessionId);
       const result = rawResult?.data || rawResult;
       const status = (result?.status || "").toUpperCase();
       console.log(`[freepik] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
@@ -1189,7 +1198,7 @@ bot.on("callback_query", async (query) => {
     bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nCooldown: 10 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
-    const result = await pollForResult(chatId, taskId, session.apiKey);
+    const result = await pollForResult(chatId, taskId, session.apiKey, session.proxySessionId);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
     console.log(`[freepik] Job ${taskId} polling finished in ${pollTime}s`);
 
