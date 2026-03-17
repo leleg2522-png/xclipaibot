@@ -57,7 +57,7 @@ if (!TELEGRAM_TOKEN) {
 
 const API_BASE = "https://api.freepik.com";
 const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || "").split(",").map(id => id.trim()).filter(Boolean);
-const KEYS_PER_USER = 3;
+const KEYS_PER_USER = 2;
 
 let VPS_PROXIES = [];
 

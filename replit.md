@@ -35,7 +35,7 @@ Telegram bot that generates motion control videos using Freepik's API for Kling 
 
 ## Per-User API Key Pool System
 - Admin adds Freepik API keys to pool via `/addkeys key1,key2,...`
-- Each user gets 3 dedicated keys assigned on first generate
+- Each user gets 2 dedicated keys assigned on first generate
 - Keys stay with the user as long as they work
 - If a key dies (402/403 error) → auto-replaced from pool
 - If a key hits rate limit (429) → rotate to next user key, 5min cooldown
