@@ -58,17 +58,18 @@ Telegram bot that generates motion control videos using Freepik's API for Kling 
 - 10-minute cooldown between generates per user (no daily limit)
 - Tracked in-memory via Map
 
-## Proxy Infrastructure (Optional)
-- `PROXY_LIST` supports comma-separated proxies (format: `host:port:user:pass`)
-- `USE_PROXY` flag to enable/disable proxy
-- Proxies rotate with least-recently-used algorithm
+## Proxy Infrastructure (Decodo — Bandwidth-Optimized)
+- `VPS_PROXIES` — Decodo rotating proxy (format: `host:port:username:password`)
+- Proxy used ONLY for small JSON requests (submit task ~1-2KB, poll status ~500B)
+- Image upload and video download go DIRECT (no proxy) to save bandwidth
+- Auto-retry with IP rotation on socket errors or blocks (max 10 attempts)
+- Fallback to direct connection if no proxy configured
 
 ## Environment Variables (Secrets)
 - `TELEGRAM_BOT_TOKEN` — Telegram bot token from @BotFather
 - `ADMIN_TELEGRAM_IDS` — Comma-separated Telegram user IDs for admin access
 - `RAILWAY_DATABASE_URL` — PostgreSQL connection string for user auth & key pool
-- `PROXY_LIST` — (optional) Comma-separated proxies (host:port:user:pass)
-- `USE_PROXY` — (optional) Enable/disable proxy (true/false)
+- `VPS_PROXIES` — (optional) Decodo proxy (gate.decodo.com:10001:username:password)
 - `PORT` — (optional) Port for Express file server, defaults to 3000
 
 ## Bot Commands

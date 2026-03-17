@@ -59,23 +59,109 @@ const API_BASE = "https://api.freepik.com";
 const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || "").split(",").map(id => id.trim()).filter(Boolean);
 const KEYS_PER_USER = 3;
 
-const USE_PROXY = (process.env.USE_PROXY || "false").toLowerCase() === "true";
-const RAW_PROXIES = process.env.PROXY_LIST || "";
-const PROXIES = RAW_PROXIES.split(",").map((p) => p.trim()).filter(Boolean).map((p) => {
-  const parts = p.split(":");
-  if (parts.length === 4) {
-    const [host, port, user, pass] = parts;
-    return `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}`;
+let VPS_PROXIES = [];
+
+function initProxy() {
+  const bulkVar = process.env.VPS_PROXIES;
+  if (bulkVar) {
+    bulkVar.split(',').map(e => e.trim()).filter(Boolean).forEach(entry => {
+      const parts = entry.split(':');
+      if (parts.length >= 2) {
+        VPS_PROXIES.push({
+          host: parts[0],
+          port: parseInt(parts[1]),
+          username: parts[2] || null,
+          password: parts[3] || null
+        });
+      }
+    });
   }
-  return p;
-});
+  console.log(`Proxy initialized: ${VPS_PROXIES.length} proxy(s)`);
+}
 
-console.log(`Loaded ${PROXIES.length} proxy(ies)`);
+initProxy();
 
-let proxyIndex = 0;
-const proxyFailures = {};
-const proxyLastUsed = {};
-const PROXY_MIN_INTERVAL = 5000;
+function buildProxyUrl(proxy) {
+  if (proxy.username && proxy.password) {
+    return `http://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`;
+  }
+  return `http://${proxy.host}:${proxy.port}`;
+}
+
+function freepikHeaders(apiKey) {
+  return {
+    'Content-Type': 'application/json',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'application/json',
+    'x-freepik-api-key': apiKey.replace(/[^\x20-\x7E]/g, '').trim()
+  };
+}
+
+async function makeFreepikRequest(method, url, apiKey, body = null) {
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  if (VPS_PROXIES.length === 0) {
+    const config = { method, url, headers: freepikHeaders(apiKey), timeout: 120000 };
+    if (body) config.data = body;
+    return axios(config);
+  }
+
+  let attempt = 0;
+  let proxyIndex = 0;
+
+  while (attempt < 10) {
+    const proxy = VPS_PROXIES[proxyIndex % VPS_PROXIES.length];
+    const proxyUrl = buildProxyUrl(proxy);
+
+    const config = {
+      method,
+      url,
+      headers: freepikHeaders(apiKey),
+      timeout: 120000,
+      httpsAgent: new HttpsProxyAgent(proxyUrl, { rejectUnauthorized: false }),
+      proxy: false
+    };
+    if (body) config.data = body;
+
+    attempt++;
+    console.log(`[PROXY] Attempt ${attempt} via ${proxy.host}:${proxy.port}`);
+
+    try {
+      const resp = await axios(config);
+      if (typeof resp.data === 'string' && resp.data.includes('Access denied')) {
+        throw new Error('Blocked by Freepik');
+      }
+      return resp;
+    } catch (err) {
+      const status = err.response?.status;
+
+      if (status === 429) throw err;
+      if (status === 401) throw err;
+      if (status === 402) throw err;
+      if (status === 403) {
+        const msg = (err.response?.data?.message || '').toLowerCase();
+        if (msg.includes('forbidden') || msg.includes('balance') || msg.includes('quota')) throw err;
+      }
+
+      const errMsg = (err.message || '').toLowerCase();
+      const isSocketErr = errMsg.includes('socket') || errMsg.includes('econnreset') ||
+                          errMsg.includes('etimedout') || errMsg.includes('ssl') ||
+                          errMsg.includes('econnrefused');
+      const isBlocked = status === 403 || status === 407 || status === 502 || status === 503;
+
+      if (isSocketErr || isBlocked) {
+        console.log(`[PROXY] ${isSocketErr ? 'Socket error' : 'Blocked'}, rotating IP...`);
+        proxyIndex++;
+        await sleep(1500);
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
+  throw new Error('Proxy: max retry attempts reached');
+}
 const lockedKeys = new Set();
 
 function lockKey(key) {
@@ -188,76 +274,6 @@ async function replaceDeadKey(userId, deadKey) {
 
 function isAdmin(msg) {
   return ADMIN_IDS.includes(String(msg.from.id));
-}
-
-function getNextProxy() {
-  if (PROXIES.length === 0) return null;
-  const now = Date.now();
-  let bestProxy = null;
-  let oldestUsed = Infinity;
-
-  for (let i = 0; i < PROXIES.length; i++) {
-    const idx = (proxyIndex + i) % PROXIES.length;
-    const proxy = PROXIES[idx];
-    const failure = proxyFailures[proxy];
-    if (failure && failure.until > now) {
-      continue;
-    }
-    const lastUsed = proxyLastUsed[proxy] || 0;
-    if (lastUsed < oldestUsed) {
-      oldestUsed = lastUsed;
-      bestProxy = proxy;
-    }
-  }
-
-  if (bestProxy) {
-    proxyLastUsed[bestProxy] = now;
-    return bestProxy;
-  }
-
-  const soonestAvailable = PROXIES.reduce((best, proxy) => {
-    const failure = proxyFailures[proxy];
-    if (!failure) return best;
-    return (!best || failure.until < best.until) ? { proxy, until: failure.until } : best;
-  }, null);
-
-  if (soonestAvailable) {
-    console.log(`All proxies on cooldown. Next available in ${Math.round((soonestAvailable.until - now) / 1000)}s`);
-  }
-
-  return null;
-}
-
-function getStickyProxyAgent(proxyUrl) {
-  if (!USE_PROXY || !proxyUrl) return {};
-  const agent = new HttpsProxyAgent(proxyUrl);
-  console.log(`Using proxy: ${proxyUrl.replace(/:[^:@]+@/, ":***@")}`);
-  return { httpsAgent: agent, httpAgent: agent, proxy: false };
-}
-
-function getProxyAgent() {
-  if (!USE_PROXY) return {};
-  const proxyUrl = getNextProxy();
-  if (!proxyUrl) return {};
-  const agent = new HttpsProxyAgent(proxyUrl);
-  console.log(`Using proxy: ${proxyUrl.replace(/:[^:@]+@/, ":***@")}`);
-  return { httpsAgent: agent, httpAgent: agent, proxy: false };
-}
-
-const PROXY_BAN_DURATION = 2 * 60 * 60 * 1000;
-
-function markProxyFailed(proxyUrl, cooldownMs = 240000, banned = false) {
-  if (banned) {
-    proxyFailures[proxyUrl] = { until: Date.now() + PROXY_BAN_DURATION };
-    console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} BLOCKED, cooldown 2 hours`);
-  } else {
-    proxyFailures[proxyUrl] = { until: Date.now() + cooldownMs };
-    console.log(`Proxy ${proxyUrl.replace(/:[^:@]+@/, ":***@")} cooldown for ${cooldownMs / 1000}s`);
-  }
-}
-
-function markProxyOk(proxyUrl) {
-  delete proxyFailures[proxyUrl];
 }
 
 const keyFailures = {};
@@ -880,12 +896,12 @@ bot.on("document", async (msg) => {
 
 async function submitMotionControl(session) {
   const quality = session.quality === "pro" ? "pro" : "std";
-  const endpoint = `/v1/ai/video/kling-v2-6-motion-control-${quality}`;
+  const url = `${API_BASE}/v1/ai/video/kling-v2-6-motion-control-${quality}`;
 
   const imageUrl = session.imageFile.publicUrl;
   const videoUrl = session.videoFile.publicUrl;
 
-  console.log(`[freepik] Submit endpoint=${endpoint}`);
+  console.log(`[freepik] Submit quality=${quality}`);
   console.log(`[freepik] image_url: ${imageUrl}`);
   console.log(`[freepik] video_url: ${videoUrl}`);
 
@@ -907,13 +923,9 @@ async function submitMotionControl(session) {
 
   console.log(`[freepik] User ${session.userId} has ${userKeys.length} keys`);
 
-  const triedKeys = new Set();
   let lastError = null;
 
   for (const apiKey of userKeys) {
-    if (triedKeys.has(apiKey)) continue;
-    triedKeys.add(apiKey);
-
     const now = Date.now();
     const failure = keyFailures[apiKey];
     if (failure && failure.until > now) {
@@ -923,22 +935,11 @@ async function submitMotionControl(session) {
 
     console.log(`[freepik] Using key ...${apiKey.slice(-6)}`);
 
-    const proxyUrl = getNextProxy();
-    const proxyOpts = getStickyProxyAgent(proxyUrl);
     try {
-      const response = await axios.post(`${API_BASE}${endpoint}`, body, {
-        headers: {
-          "Content-Type": "application/json",
-          "x-freepik-api-key": apiKey,
-        },
-        timeout: 30000,
-        ...proxyOpts,
-      });
+      const response = await makeFreepikRequest('POST', url, apiKey, body);
       markKeyOk(apiKey);
-      if (proxyUrl) markProxyOk(proxyUrl);
       lockKey(apiKey);
       session.apiKey = apiKey;
-      session.proxyUrl = proxyUrl;
       return response.data;
     } catch (err) {
       const status = err.response?.status;
@@ -946,12 +947,6 @@ async function submitMotionControl(session) {
       lastError = err;
 
       console.log(`[freepik] Submit error: ${status} - ${msg}`);
-
-      if (proxyUrl && (status === 407 || status === 502 || status === 503 || err.code === "ECONNREFUSED" || err.code === "ETIMEDOUT")) {
-        markProxyFailed(proxyUrl, 240000, status === 407);
-        console.log(`[freepik] Proxy error, retrying with next key...`);
-        continue;
-      }
 
       if (status === 429) {
         markKeyFailed(apiKey, 300000);
@@ -975,50 +970,18 @@ async function submitMotionControl(session) {
     }
   }
 
-  if (USE_PROXY && lastError) {
-    console.log("[freepik] All keys with proxy failed, retrying without proxy...");
-    const retryKeys = await getUserKeys(session.userId);
-    for (const apiKey of retryKeys) {
-      try {
-        const response = await axios.post(`${API_BASE}${endpoint}`, body, {
-          headers: {
-            "Content-Type": "application/json",
-            "x-freepik-api-key": apiKey,
-          },
-          timeout: 30000,
-        });
-        markKeyOk(apiKey);
-        lockKey(apiKey);
-        session.apiKey = apiKey;
-        session.proxyUrl = null;
-        return response.data;
-      } catch (err) {
-        lastError = err;
-      }
-    }
-  }
-
   if (lastError) throw lastError;
   throw new Error("Semua API key tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey, proxyUrl) {
+async function checkTaskStatus(taskId, apiKey) {
   if (!apiKey) throw new Error("API key is required for polling");
   const url = `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`;
-  const proxyOpts = getStickyProxyAgent(proxyUrl);
-
-  const response = await axios.get(url, {
-    headers: {
-      "x-freepik-api-key": apiKey,
-    },
-    timeout: 15000,
-    ...proxyOpts,
-  });
-
+  const response = await makeFreepikRequest('GET', url, apiKey);
   return response.data;
 }
 
-async function pollForResult(chatId, taskId, apiKey, proxyUrl) {
+async function pollForResult(chatId, taskId, apiKey) {
   const maxAttempts = 80;
   let consecutiveErrors = 0;
   let totalWaitMs = 0;
@@ -1035,7 +998,7 @@ async function pollForResult(chatId, taskId, apiKey, proxyUrl) {
     totalWaitMs += intervalMs;
 
     try {
-      const rawResult = await checkTaskStatus(taskId, apiKey, proxyUrl);
+      const rawResult = await checkTaskStatus(taskId, apiKey);
       const result = rawResult?.data || rawResult;
       const status = (result?.status || "").toUpperCase();
       console.log(`[freepik] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
@@ -1171,7 +1134,7 @@ bot.on("callback_query", async (query) => {
     bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nCooldown: 10 menit\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
-    const result = await pollForResult(chatId, taskId, session.apiKey, session.proxyUrl);
+    const result = await pollForResult(chatId, taskId, session.apiKey);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
     console.log(`[freepik] Job ${taskId} polling finished in ${pollTime}s`);
 
