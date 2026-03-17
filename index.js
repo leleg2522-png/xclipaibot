@@ -131,11 +131,11 @@ async function makeFreepikRequest(method, url, apiKey, body = null, sessionId = 
   let attempt = 0;
   let proxyIndex = 0;
   const maxAttempts = 15;
-  const sid = sessionId || generateSessionId();
+  let currentSid = sessionId || generateSessionId();
 
   while (attempt < maxAttempts) {
     const proxy = VPS_PROXIES[proxyIndex % VPS_PROXIES.length];
-    const proxyUrl = buildProxyUrl(proxy, sid);
+    const proxyUrl = buildProxyUrl(proxy, currentSid);
 
     const config = {
       method,
@@ -148,14 +148,14 @@ async function makeFreepikRequest(method, url, apiKey, body = null, sessionId = 
     if (body) config.data = body;
 
     attempt++;
-    console.log(`[PROXY] Attempt ${attempt}/${maxAttempts} via ${proxy.host}:${proxy.port}`);
+    console.log(`[PROXY] Attempt ${attempt}/${maxAttempts} session=${currentSid} via ${proxy.host}:${proxy.port}`);
 
     try {
       const resp = await axios(config);
       if (typeof resp.data === 'string' && resp.data.includes('Access denied')) {
         throw new Error('Blocked by Freepik');
       }
-      resp._proxySessionId = sid;
+      resp._proxySessionId = currentSid;
       return resp;
     } catch (err) {
       const status = err.response?.status;
@@ -175,8 +175,10 @@ async function makeFreepikRequest(method, url, apiKey, body = null, sessionId = 
                            status === 522 || status === 524;
 
       if (isSocketErr || isProxyBlock) {
+        const oldSid = currentSid;
+        currentSid = generateSessionId();
         const reason = isSocketErr ? `Socket error (${err.code || errMsg.substring(0, 30)})` : `HTTP ${status}`;
-        console.log(`[PROXY] ${reason}, rotating IP... (wait ${Math.round((5000 + attempt * 2000) / 1000)}s)`);
+        console.log(`[PROXY] ${reason}, new session ${currentSid} (was ${oldSid}), wait ${Math.round((5000 + attempt * 2000) / 1000)}s`);
         proxyIndex++;
         await sleep(randomDelay(5000 + attempt * 2000, 3000));
         continue;
