@@ -91,10 +91,27 @@ function buildProxyUrl(proxy) {
 function freepikHeaders(apiKey) {
   return {
     'Content-Type': 'application/json',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     'Accept': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
     'x-freepik-api-key': apiKey.replace(/[^\x20-\x7E]/g, '').trim()
   };
+}
+
+function isFreepikApiError(err) {
+  const status = err.response?.status;
+  if (!status) return false;
+  const body = err.response?.data;
+  if (!body) return false;
+  if (typeof body === 'object' && (body.message || body.detail || body.error)) return true;
+  if (typeof body === 'string' && body.startsWith('{')) return true;
+  return false;
+}
+
+function randomDelay(baseMs, jitterMs) {
+  return baseMs + Math.floor(Math.random() * jitterMs);
 }
 
 async function makeFreepikRequest(method, url, apiKey, body = null) {
@@ -108,8 +125,9 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
 
   let attempt = 0;
   let proxyIndex = 0;
+  const maxAttempts = 15;
 
-  while (attempt < 10) {
+  while (attempt < maxAttempts) {
     const proxy = VPS_PROXIES[proxyIndex % VPS_PROXIES.length];
     const proxyUrl = buildProxyUrl(proxy);
 
@@ -124,7 +142,7 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
     if (body) config.data = body;
 
     attempt++;
-    console.log(`[PROXY] Attempt ${attempt} via ${proxy.host}:${proxy.port}`);
+    console.log(`[PROXY] Attempt ${attempt}/${maxAttempts} via ${proxy.host}:${proxy.port}`);
 
     try {
       const resp = await axios(config);
@@ -134,25 +152,26 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
       return resp;
     } catch (err) {
       const status = err.response?.status;
+      const respBody = err.response?.data;
 
       if (status === 429) throw err;
-      if (status === 401) throw err;
-      if (status === 402) throw err;
-      if (status === 403) {
-        const msg = (err.response?.data?.message || '').toLowerCase();
-        if (msg.includes('forbidden') || msg.includes('balance') || msg.includes('quota')) throw err;
-      }
+      if (status === 401 && isFreepikApiError(err)) throw err;
+      if (status === 402 && isFreepikApiError(err)) throw err;
+      if (status === 403 && isFreepikApiError(err)) throw err;
 
       const errMsg = (err.message || '').toLowerCase();
       const isSocketErr = errMsg.includes('socket') || errMsg.includes('econnreset') ||
                           errMsg.includes('etimedout') || errMsg.includes('ssl') ||
-                          errMsg.includes('econnrefused');
-      const isBlocked = status === 403 || status === 407 || status === 502 || status === 503;
+                          errMsg.includes('econnrefused') || errMsg.includes('enotfound');
+      const isProxyBlock = (status === 403 && !isFreepikApiError(err)) ||
+                           status === 407 || status === 502 || status === 503 || status === 504 ||
+                           status === 522 || status === 524;
 
-      if (isSocketErr || isBlocked) {
-        console.log(`[PROXY] ${isSocketErr ? 'Socket error' : `Blocked (${status})`}, rotating IP...`);
+      if (isSocketErr || isProxyBlock) {
+        const reason = isSocketErr ? `Socket error (${err.code || errMsg.substring(0, 30)})` : `HTTP ${status}`;
+        console.log(`[PROXY] ${reason}, rotating IP... (wait ${Math.round((5000 + attempt * 2000) / 1000)}s)`);
         proxyIndex++;
-        await sleep(3000 + attempt * 1000);
+        await sleep(randomDelay(5000 + attempt * 2000, 3000));
         continue;
       }
 
@@ -160,7 +179,7 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
     }
   }
 
-  throw new Error('Proxy gagal setelah 10 percobaan. Coba lagi nanti.');
+  throw new Error('Proxy gagal setelah semua percobaan. Coba lagi nanti.');
 }
 const lockedKeys = new Set();
 
