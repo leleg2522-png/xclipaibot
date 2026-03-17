@@ -873,6 +873,75 @@ bot.onText(/\/poolstatus/, async (msg) => {
   }
 });
 
+bot.onText(/\/returnkeys(?:\s+(\d+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(msg)) {
+    bot.sendMessage(chatId, "Hanya admin yang bisa menggunakan perintah ini.");
+    return;
+  }
+
+  try {
+    const targetUserId = match[1] ? parseInt(match[1]) : null;
+
+    if (!targetUserId) {
+      const allAssigned = await db.query(
+        "SELECT ua.user_id, ua.api_key FROM user_api_keys ua ORDER BY ua.user_id"
+      );
+      if (allAssigned.rows.length === 0) {
+        bot.sendMessage(chatId, "Tidak ada key yang sedang di-assign ke user.");
+        return;
+      }
+
+      const grouped = {};
+      for (const row of allAssigned.rows) {
+        if (!grouped[row.user_id]) grouped[row.user_id] = [];
+        grouped[row.user_id].push(row.api_key.slice(-6));
+      }
+
+      let text = "Key yang sedang di-assign:\n\n";
+      for (const [uid, keys] of Object.entries(grouped)) {
+        text += `User ${uid}: ${keys.map(k => `...${k}`).join(", ")}\n`;
+      }
+      text += `\nUntuk kembalikan key user tertentu:\n/returnkeys <user_id>`;
+      bot.sendMessage(chatId, text);
+      return;
+    }
+
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      const userKeys = await client.query(
+        "SELECT api_key FROM user_api_keys WHERE user_id = $1", [targetUserId]
+      );
+
+      if (userKeys.rows.length === 0) {
+        await client.query("COMMIT");
+        bot.sendMessage(chatId, `User ${targetUserId} tidak punya key yang di-assign.`);
+        return;
+      }
+
+      for (const row of userKeys.rows) {
+        await client.query(
+          "UPDATE api_key_pool SET status = 'available', assigned_to = NULL WHERE api_key = $1 AND status = 'assigned'",
+          [row.api_key]
+        );
+      }
+      await client.query("DELETE FROM user_api_keys WHERE user_id = $1", [targetUserId]);
+      await client.query("COMMIT");
+
+      bot.sendMessage(chatId, `${userKeys.rows.length} key dari user ${targetUserId} dikembalikan ke pool.`);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error("Return keys error:", err.message);
+    bot.sendMessage(chatId, "Gagal mengembalikan key: " + err.message);
+  }
+});
+
 bot.on("photo", async (msg) => {
   const chatId = msg.chat.id;
   const session = getSession(msg);
