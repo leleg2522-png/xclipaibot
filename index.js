@@ -1234,8 +1234,10 @@ bot.on("callback_query", async (query) => {
     if (session.apiKey) unlockKey(session.apiKey);
     resetSession(msg);
   } catch (err) {
-    console.error("[freepik] Generate error:", err.response?.data || err.message);
-    const errorMsg = err.response?.data?.message || err.response?.data?.detail || err.response?.data?.error || err.message;
+    const errStatus = err.response?.status || 'N/A';
+    const errBody = err.response?.data ? JSON.stringify(err.response.data).substring(0, 500) : 'N/A';
+    console.error(`[freepik] Generate error: status=${errStatus} message=${err.message} body=${errBody}`);
+    const errorMsg = err.response?.data?.message || err.response?.data?.detail || err.response?.data?.error || err.message || 'Unknown error';
     bot.sendMessage(chatId, `Error: ${errorMsg}`);
     if (session.apiKey) unlockKey(session.apiKey);
     session.isGenerating = false;
