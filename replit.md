@@ -54,9 +54,10 @@ Telegram bot that generates motion control videos using Freepik's API for Kling 
 - **Request body**: `{ image_url, video_url, character_orientation, cfg_scale, prompt }`
 - **Response**: `{ data: { task_id, status, generated: [...] } }`
 
-## Cooldown System
-- 10-minute cooldown between generates per user (no daily limit)
-- Tracked in-memory via Map
+## Cooldown & Daily Limit
+- 10-minute cooldown between generates per user
+- Maximum 10 generates per user per day (resets at midnight UTC)
+- Both tracked in-memory via Map
 
 ## Proxy Infrastructure (Decodo — Bandwidth-Optimized)
 - `VPS_PROXIES` — Decodo rotating proxy (format: `host:port:username:password`)

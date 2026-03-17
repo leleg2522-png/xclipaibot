@@ -318,7 +318,34 @@ function getPublicFileUrl(filename) {
 }
 
 const COOLDOWN_MS = 10 * 60 * 1000;
+const DAILY_LIMIT = 10;
 const userCooldowns = new Map();
+const userDailyUsage = new Map();
+
+function getTodayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getDailyUsage(userId) {
+  const entry = userDailyUsage.get(userId);
+  const today = getTodayKey();
+  if (!entry || entry.date !== today) return 0;
+  return entry.count;
+}
+
+function incrementDailyUsage(userId) {
+  const today = getTodayKey();
+  const entry = userDailyUsage.get(userId);
+  if (!entry || entry.date !== today) {
+    userDailyUsage.set(userId, { date: today, count: 1 });
+  } else {
+    entry.count++;
+  }
+}
+
+function getDailyRemaining(userId) {
+  return Math.max(0, DAILY_LIMIT - getDailyUsage(userId));
+}
 
 function getCooldownRemaining(userId) {
   const lastUsed = userCooldowns.get(userId);
@@ -682,6 +709,7 @@ bot.onText(/\/status/, async (msg) => {
     `Kualitas: ${session.quality}`,
     `Generating: ${session.isGenerating ? "Ya" : "Tidak"}`,
     `Cooldown: ${session.userId ? (() => { const r = getCooldownRemaining(session.userId); return r > 0 ? `${Math.ceil(r / 60000)} menit lagi` : "Siap generate"; })() : "N/A"}`,
+    `Generate hari ini: ${session.userId ? `${getDailyUsage(session.userId)}/${DAILY_LIMIT}` : "N/A"}`,
   );
   bot.sendMessage(msg.chat.id, lines.join("\n"));
 });
@@ -1050,6 +1078,12 @@ bot.onText(/\/generate/, async (msg) => {
     return;
   }
 
+  const dailyRemaining = getDailyRemaining(session.userId);
+  if (dailyRemaining <= 0) {
+    bot.sendMessage(chatId, `Batas harian tercapai (${DAILY_LIMIT}x/hari). Coba lagi besok.`);
+    return;
+  }
+
   const cooldownLeft = getCooldownRemaining(session.userId);
   if (cooldownLeft > 0) {
     const minutesLeft = Math.ceil(cooldownLeft / 60000);
@@ -1131,7 +1165,9 @@ bot.on("callback_query", async (query) => {
 
     console.log(`[freepik] Job ${taskId} submitted in ${submitTime}s`);
     setCooldown(session.userId);
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nCooldown: 10 menit\n\nMenunggu hasil...`);
+    incrementDailyUsage(session.userId);
+    const remaining = getDailyRemaining(session.userId);
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nCooldown: 10 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
     const result = await pollForResult(chatId, taskId, session.apiKey);
