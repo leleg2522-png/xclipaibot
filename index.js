@@ -37,13 +37,14 @@ if (RAILWAY_DB_URL) {
       return db.query(`
         CREATE TABLE IF NOT EXISTS user_api_keys (
           id SERIAL PRIMARY KEY,
-          user_id INTEGER NOT NULL,
+          user_id BIGINT NOT NULL,
           api_key TEXT NOT NULL,
           assigned_at TIMESTAMP DEFAULT NOW(),
           UNIQUE(user_id, api_key)
         )
       `);
     })
+    .then(() => db.query("ALTER TABLE user_api_keys ALTER COLUMN user_id TYPE BIGINT").catch(() => {}))
     .then(() => console.log("user_api_keys table ready"))
     .catch((err) => console.error("Database connection error:", err.message));
 } else {
@@ -881,7 +882,7 @@ bot.onText(/\/returnkeys(?:\s+(\d+))?/, async (msg, match) => {
   }
 
   try {
-    const targetUserId = match[1] ? parseInt(match[1]) : null;
+    const targetUserId = match[1] ? match[1].trim() : null;
 
     if (!targetUserId) {
       const allAssigned = await db.query(
