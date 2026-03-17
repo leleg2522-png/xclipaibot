@@ -59,6 +59,14 @@ Telegram bot that generates motion control videos using Freepik's API for Kling 
 - Maximum 10 generates per user per day (resets at midnight UTC)
 - Both tracked in-memory via Map
 
+## Webhook + Polling System
+- Webhook endpoint: `POST /webhook/freepik` — Freepik sends result here when video is done
+- Webhook URL sent in submit body as `webhook` field
+- Polling runs as backup: every 30s if webhook active, every 15s if no webhook
+- Webhook resolves result instantly when received, skipping remaining polls
+- If webhook doesn't arrive, polling still catches the result
+- Requires `RAILWAY_PUBLIC_DOMAIN` to be set for webhook to activate
+
 ## Proxy Infrastructure (Decodo — Bandwidth-Optimized)
 - `VPS_PROXIES` — Decodo rotating proxy (format: `host:port:username:password`)
 - Proxy used ONLY for small JSON requests (submit task ~1-2KB, poll status ~500B)

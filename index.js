@@ -318,10 +318,47 @@ const express = require("express");
 const app = express();
 const FILE_SERVER_PORT = process.env.PORT || 3000;
 
+app.use(express.json());
 app.use("/files", express.static(UPLOAD_DIR));
 
+const pendingTasks = new Map();
+
 app.get("/", (req, res) => {
-  res.json({ status: "ok", bot: "Kling 2.6 Motion Control" });
+  res.json({ status: "ok", bot: "Kling 2.6 Motion Control", pendingTasks: pendingTasks.size });
+});
+
+app.post("/webhook/freepik", async (req, res) => {
+  try {
+    const payload = req.body;
+    console.log("[WEBHOOK] Received:", JSON.stringify(payload).substring(0, 1000));
+
+    const taskId = payload?.data?.task_id || payload?.task_id || payload?.id;
+    if (!taskId) {
+      console.log("[WEBHOOK] No task_id found in payload");
+      return res.status(400).json({ error: "No task_id" });
+    }
+
+    const taskInfo = pendingTasks.get(taskId);
+    if (!taskInfo) {
+      console.log(`[WEBHOOK] Unknown task ${taskId}, ignoring`);
+      return res.status(200).json({ ok: true });
+    }
+
+    const result = payload?.data || payload;
+    const status = (result?.status || "").toUpperCase();
+    console.log(`[WEBHOOK] Task ${taskId} status=${status}`);
+
+    if (status === "COMPLETED" || status === "FAILED" || status === "ERROR") {
+      taskInfo.resolve(result);
+      pendingTasks.delete(taskId);
+      console.log(`[WEBHOOK] Task ${taskId} resolved (${status})`);
+    }
+
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error("[WEBHOOK] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.listen(FILE_SERVER_PORT, "0.0.0.0", () => {
@@ -951,12 +988,19 @@ async function submitMotionControl(session) {
   console.log(`[freepik] image_url: ${imageUrl}`);
   console.log(`[freepik] video_url: ${videoUrl}`);
 
+  const webhookUrl = PUBLIC_DOMAIN ? `https://${PUBLIC_DOMAIN}/webhook/freepik` : null;
+
   const body = {
     image_url: imageUrl,
     video_url: videoUrl,
     character_orientation: session.orientation || "video",
     cfg_scale: 0.5,
   };
+
+  if (webhookUrl) {
+    body.webhook = webhookUrl;
+    console.log(`[freepik] Webhook URL: ${webhookUrl}`);
+  }
 
   if (session.prompt) {
     body.prompt = session.prompt;
@@ -1027,19 +1071,63 @@ async function checkTaskStatus(taskId, apiKey) {
   return response.data;
 }
 
+function waitForWebhook(taskId, timeoutMs = 25 * 60 * 1000) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingTasks.delete(taskId);
+      resolve(null);
+    }, timeoutMs);
+
+    pendingTasks.set(taskId, {
+      resolve: (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      }
+    });
+
+    console.log(`[WEBHOOK] Waiting for task ${taskId} (timeout ${timeoutMs / 1000}s)`);
+  });
+}
+
 async function pollForResult(chatId, taskId, apiKey) {
-  const maxAttempts = 80;
+  const useWebhook = PUBLIC_DOMAIN && pendingTasks.has(taskId);
+  const maxWaitMs = 25 * 60 * 1000;
+  const pollInterval = useWebhook ? 30000 : 15000;
+  const maxAttempts = Math.ceil(maxWaitMs / pollInterval);
   let consecutiveErrors = 0;
   let totalWaitMs = 0;
 
-  function getInterval() {
-    return 15000;
-  }
+  console.log(`[freepik] Poll mode: ${useWebhook ? 'webhook + backup poll (30s)' : 'poll only (15s)'}`);
 
   for (let i = 0; i < maxAttempts; i++) {
-    const intervalMs = getInterval(i) + Math.floor(Math.random() * 1000);
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    totalWaitMs += intervalMs;
+    const intervalMs = pollInterval + Math.floor(Math.random() * 1000);
+
+    if (useWebhook) {
+      const webhookResult = await Promise.race([
+        new Promise((resolve) => {
+          const existing = pendingTasks.get(taskId);
+          if (!existing) resolve(null);
+          else {
+            const origResolve = existing.resolve;
+            existing.resolve = (result) => {
+              origResolve(result);
+              resolve(result);
+            };
+          }
+        }),
+        new Promise((resolve) => setTimeout(() => resolve('TIMEOUT'), intervalMs))
+      ]);
+
+      totalWaitMs += intervalMs;
+
+      if (webhookResult && webhookResult !== 'TIMEOUT') {
+        console.log(`[WEBHOOK] Got result for task ${taskId} via webhook! (${Math.round(totalWaitMs / 1000)}s)`);
+        return webhookResult;
+      }
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      totalWaitMs += intervalMs;
+    }
 
     try {
       const rawResult = await checkTaskStatus(taskId, apiKey);
@@ -1050,13 +1138,15 @@ async function pollForResult(chatId, taskId, apiKey) {
 
       if (status === "COMPLETED") {
         console.log("[freepik] Task completed! Full response:", JSON.stringify(rawResult));
+        pendingTasks.delete(taskId);
         return result;
       } else if (status === "FAILED" || status === "ERROR") {
         console.log("[freepik] Task failed! Full response:", JSON.stringify(rawResult));
+        pendingTasks.delete(taskId);
         return result;
       }
 
-      if (i > 0 && i % 6 === 0) {
+      if (i > 0 && i % 4 === 0) {
         const elapsed = Math.round(totalWaitMs / 1000);
         bot.sendMessage(chatId, `Masih memproses... (${elapsed} detik)`);
       }
@@ -1071,6 +1161,7 @@ async function pollForResult(chatId, taskId, apiKey) {
     }
   }
 
+  pendingTasks.delete(taskId);
   return null;
 }
 
@@ -1183,7 +1274,12 @@ bot.on("callback_query", async (query) => {
     setCooldown(session.userId);
     incrementDailyUsage(session.userId);
     const remaining = getDailyRemaining(session.userId);
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nCooldown: 10 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
+    const webhookActive = !!PUBLIC_DOMAIN;
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nCooldown: 10 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\nMode: ${webhookActive ? 'Webhook + Polling' : 'Polling'}\n\nMenunggu hasil...`);
+
+    if (webhookActive) {
+      waitForWebhook(taskId);
+    }
 
     const pollStart = Date.now();
     const result = await pollForResult(chatId, taskId, session.apiKey);
