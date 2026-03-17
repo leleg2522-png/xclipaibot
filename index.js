@@ -26,7 +26,7 @@ if (RAILWAY_DB_URL) {
           id SERIAL PRIMARY KEY,
           api_key TEXT NOT NULL UNIQUE,
           status TEXT NOT NULL DEFAULT 'available',
-          assigned_to INTEGER,
+          assigned_to BIGINT,
           created_at TIMESTAMP DEFAULT NOW(),
           dead_at TIMESTAMP
         )
@@ -44,7 +44,12 @@ if (RAILWAY_DB_URL) {
         )
       `);
     })
-    .then(() => db.query("ALTER TABLE user_api_keys ALTER COLUMN user_id TYPE BIGINT").catch(() => {}))
+    .then(() => {
+      return Promise.all([
+        db.query("ALTER TABLE user_api_keys ALTER COLUMN user_id TYPE BIGINT").catch(() => {}),
+        db.query("ALTER TABLE api_key_pool ALTER COLUMN assigned_to TYPE BIGINT").catch(() => {})
+      ]);
+    })
     .then(() => console.log("user_api_keys table ready"))
     .catch((err) => console.error("Database connection error:", err.message));
 } else {
