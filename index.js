@@ -376,6 +376,7 @@ const COOLDOWN_MS = 10 * 60 * 1000;
 const DAILY_LIMIT = 10;
 const userCooldowns = new Map();
 const userDailyUsage = new Map();
+const userKeyRotation = new Map();
 
 function getTodayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -1013,9 +1014,13 @@ async function submitMotionControl(session) {
 
   console.log(`[freepik] User ${session.userId} has ${userKeys.length} keys`);
 
+  const userRoundRobin = userKeyRotation.get(session.userId) || 0;
+  const rotatedKeys = [...userKeys.slice(userRoundRobin % userKeys.length), ...userKeys.slice(0, userRoundRobin % userKeys.length)];
+  userKeyRotation.set(session.userId, userRoundRobin + 1);
+
   let lastError = null;
 
-  for (const apiKey of userKeys) {
+  for (const apiKey of rotatedKeys) {
     const now = Date.now();
     const failure = keyFailures[apiKey];
     if (failure && failure.until > now) {
