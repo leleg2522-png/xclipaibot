@@ -160,7 +160,7 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
     }
   }
 
-  throw new Error('Proxy: max retry attempts reached');
+  throw new Error('Proxy gagal setelah 10 percobaan. Coba lagi nanti.');
 }
 const lockedKeys = new Set();
 
