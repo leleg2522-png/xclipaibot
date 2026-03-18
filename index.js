@@ -1119,8 +1119,8 @@ async function submitMotionControl(session) {
       console.log(`[freepik] Submit error: ${status} - ${msg}`);
 
       if (status === 429) {
-        markKeyFailed(apiKey, 300000);
-        console.log(`[freepik] Key ...${apiKey.slice(-6)} rate limited, cooldown 5min`);
+        console.log(`[freepik] Key ...${apiKey.slice(-6)} rate limited/quota habis, replacing...`);
+        await replaceDeadKey(session.userId, apiKey);
         continue;
       }
 
