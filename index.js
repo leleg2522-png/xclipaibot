@@ -9,13 +9,13 @@ const bcrypt = require("bcryptjs");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.REPLIT_DEV_DOMAIN;
-const RAILWAY_DB_URL = process.env.RAILWAY_DATABASE_URL;
+const RAILWAY_DB_URL = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
 
 let db = null;
 if (RAILWAY_DB_URL) {
   db = new Pool({
     connectionString: RAILWAY_DB_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: RAILWAY_DB_URL.includes('railway') || RAILWAY_DB_URL.includes('neon') ? { rejectUnauthorized: false } : false,
     max: 5,
   });
   db.query("SELECT 1")
@@ -68,7 +68,7 @@ const KEYS_PER_USER = 2;
 let VPS_PROXIES = [];
 
 function initProxy() {
-  const bulkVar = process.env.VPS_PROXIES;
+  const bulkVar = process.env.VPS_PROXIES || process.env.PROXY_LIST;
   if (bulkVar) {
     bulkVar.split(',').map(e => e.trim()).filter(Boolean).forEach(entry => {
       const parts = entry.split(':');
