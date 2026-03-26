@@ -65,45 +65,46 @@ const API_BASE = "https://api.freepik.com";
 const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || "").split(",").map(id => id.trim()).filter(Boolean);
 
 const MODELS = {
+  // === IMAGE TO VIDEO (foto saja, tanpa video referensi) ===
   'kling-2-6-std': {
-    name: 'Kling 2.6 Standard (720p)',
+    name: 'Kling 2.6 Standard',
     emoji: '⚡',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-6-motion-control-std`,
+    submitUrl: `${API_BASE}/v1/ai/image-to-video/kling-v2-6/`,
     statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`,
-    requiresVideo: true,
-    motionControl: true,
+    requiresVideo: false,
+    motionControl: false,
   },
   'kling-2-6-pro': {
-    name: 'Kling 2.6 Pro (1080p)',
+    name: 'Kling 2.6 Pro',
     emoji: '🔥',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-6-motion-control-pro`,
+    submitUrl: `${API_BASE}/v1/ai/image-to-video/kling-v2-6-pro/`,
     statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`,
-    requiresVideo: true,
-    motionControl: true,
+    requiresVideo: false,
+    motionControl: false,
   },
   'kling-2-1-pro': {
-    name: 'Kling 2.1 Pro (1080p)',
+    name: 'Kling 2.1 Pro',
     emoji: '🎯',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-1-motion-control-pro`,
+    submitUrl: `${API_BASE}/v1/ai/image-to-video/kling-v2-1-pro/`,
     statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-1/${taskId}`,
-    requiresVideo: true,
-    motionControl: true,
+    requiresVideo: false,
+    motionControl: false,
   },
   'kling-2-1-master': {
     name: 'Kling 2.1 Master',
     emoji: '👑',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-1-master`,
+    submitUrl: `${API_BASE}/v1/ai/image-to-video/kling-v2-1-master/`,
     statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-1/${taskId}`,
-    requiresVideo: true,
-    motionControl: true,
+    requiresVideo: false,
+    motionControl: false,
   },
   'kling-v3': {
     name: 'Kling V3',
     emoji: '🚀',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v3-motion-control`,
+    submitUrl: `${API_BASE}/v1/ai/image-to-video/kling-v3/`,
     statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v3/${taskId}`,
-    requiresVideo: true,
-    motionControl: true,
+    requiresVideo: false,
+    motionControl: false,
   },
   'wan-2-6-pro': {
     name: 'Wan 2.6 Pro',
@@ -121,10 +122,84 @@ const MODELS = {
     requiresVideo: false,
     motionControl: false,
   },
+  // === MOTION CONTROL (foto + video referensi gerakan) ===
+  'kling-2-6-std-mc': {
+    name: 'Kling 2.6 Standard MC',
+    emoji: '⚡',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-6-motion-control-std`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`,
+    requiresVideo: true,
+    motionControl: true,
+  },
+  'kling-2-6-pro-mc': {
+    name: 'Kling 2.6 Pro MC',
+    emoji: '🔥',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-6-motion-control-pro`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`,
+    requiresVideo: true,
+    motionControl: true,
+  },
+  'kling-2-1-pro-mc': {
+    name: 'Kling 2.1 Pro MC',
+    emoji: '🎯',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-1-motion-control-pro`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-1/${taskId}`,
+    requiresVideo: true,
+    motionControl: true,
+  },
+  'kling-2-1-master-mc': {
+    name: 'Kling 2.1 Master MC',
+    emoji: '👑',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-1-master`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-1/${taskId}`,
+    requiresVideo: true,
+    motionControl: true,
+  },
+  'kling-v3-mc': {
+    name: 'Kling V3 MC',
+    emoji: '🚀',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v3-motion-control`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v3/${taskId}`,
+    requiresVideo: true,
+    motionControl: true,
+  },
 };
 const KEYS_PER_USER = 2;
 
 let VPS_PROXIES = [];
+
+function getModelKeyboard() {
+  return [
+    [{ text: "── 🎬 Image to Video ──", callback_data: "noop" }],
+    [
+      { text: "⚡ Kling 2.6 Standard", callback_data: "model_kling-2-6-std" },
+      { text: "🔥 Kling 2.6 Pro", callback_data: "model_kling-2-6-pro" },
+    ],
+    [
+      { text: "🎯 Kling 2.1 Pro", callback_data: "model_kling-2-1-pro" },
+      { text: "👑 Kling 2.1 Master", callback_data: "model_kling-2-1-master" },
+    ],
+    [
+      { text: "🚀 Kling V3", callback_data: "model_kling-v3" },
+      { text: "🌊 Wan 2.6 Pro", callback_data: "model_wan-2-6-pro" },
+    ],
+    [
+      { text: "🌱 Seedance 1.5 Pro", callback_data: "model_seedance-1-5-pro" },
+    ],
+    [{ text: "── 🎥 Motion Control ──", callback_data: "noop" }],
+    [
+      { text: "⚡ Kling 2.6 Std MC", callback_data: "model_kling-2-6-std-mc" },
+      { text: "🔥 Kling 2.6 Pro MC", callback_data: "model_kling-2-6-pro-mc" },
+    ],
+    [
+      { text: "🎯 Kling 2.1 Pro MC", callback_data: "model_kling-2-1-pro-mc" },
+      { text: "👑 Kling 2.1 Master MC", callback_data: "model_kling-2-1-master-mc" },
+    ],
+    [
+      { text: "🚀 Kling V3 MC", callback_data: "model_kling-v3-mc" },
+    ],
+  ];
+}
 
 function initProxy() {
   const bulkVar = process.env.VPS_PROXIES || process.env.PROXY_LIST;
@@ -664,6 +739,7 @@ function resetSession(msg, fullReset = false) {
     session.videoFile = null;
     session.prompt = null;
     session.orientation = "video";
+    session.motionStrength = 0.5;
     session.selectedModel = null;
     session.isGenerating = false;
     session.loginStep = null;
@@ -689,25 +765,25 @@ bot.onText(/\/start/, (msg) => {
 
 Bot ini menghasilkan video menggunakan berbagai model AI terbaik via Freepik API.
 
-Model yang tersedia:
-⚡ Kling 2.6 Standard (720p) — Motion Control
-🔥 Kling 2.6 Pro (1080p) — Motion Control
-🎯 Kling 2.1 Pro (1080p) — Motion Control
-👑 Kling 2.1 Master — Motion Control
-🚀 Kling V3 — Motion Control
-🌊 Wan 2.6 Pro — Image to Video
-🌱 Seedance 1.5 Pro — Image to Video
+🎬 Image to Video (foto saja):
+⚡ Kling 2.6 Standard | 🔥 Kling 2.6 Pro
+🎯 Kling 2.1 Pro | 👑 Kling 2.1 Master
+🚀 Kling V3 | 🌊 Wan 2.6 Pro | 🌱 Seedance 1.5 Pro
 
-Cara pakai (Motion Control):
-1️⃣ Login dulu: /login email password
-2️⃣ Kirim foto karakter
-3️⃣ Kirim video referensi gerakan
-4️⃣ Ketik /generate → pilih model
+🎥 Motion Control (foto + video referensi):
+⚡ Kling 2.6 Std MC | 🔥 Kling 2.6 Pro MC
+🎯 Kling 2.1 Pro MC | 👑 Kling 2.1 Master MC
+🚀 Kling V3 MC
 
-Cara pakai (Image to Video):
-1️⃣ Login dulu: /login email password
+Cara pakai Image to Video:
+1️⃣ /login → pilih model
 2️⃣ Kirim foto karakter
-3️⃣ Ketik /generate → pilih model Wan/Seedance
+3️⃣ /generate → langsung proses
+
+Cara pakai Motion Control:
+1️⃣ /login → pilih model MC
+2️⃣ Kirim foto karakter + video referensi
+3️⃣ /generate → langsung proses
 
 Perintah:
 /start - Mulai ulang
@@ -788,27 +864,7 @@ async function processLogin(chatId, msg, session, loginInput, password) {
     bot.sendMessage(
       chatId,
       `✅ Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan: ${subResult.planName} (Aktif)\nBerlaku sampai: ${expDate}\n\nPilih model AI yang ingin kamu gunakan:`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "⚡ Kling 2.6 Standard", callback_data: "model_kling-2-6-std" },
-              { text: "🔥 Kling 2.6 Pro", callback_data: "model_kling-2-6-pro" },
-            ],
-            [
-              { text: "🎯 Kling 2.1 Pro", callback_data: "model_kling-2-1-pro" },
-              { text: "👑 Kling 2.1 Master", callback_data: "model_kling-2-1-master" },
-            ],
-            [
-              { text: "🚀 Kling V3", callback_data: "model_kling-v3" },
-            ],
-            [
-              { text: "🌊 Wan 2.6 Pro", callback_data: "model_wan-2-6-pro" },
-              { text: "🌱 Seedance 1.5 Pro", callback_data: "model_seedance-1-5-pro" },
-            ],
-          ],
-        },
-      }
+      { reply_markup: { inline_keyboard: getModelKeyboard() } }
     );
   } catch (err) {
     console.error("Login error:", err);
@@ -1387,25 +1443,8 @@ bot.onText(/\/generate/, async (msg) => {
     bot.sendMessage(chatId, `Model: ${modelConfig.emoji} ${modelConfig.name}\n\nMemulai generate video...\n${modelConfig.motionControl ? `Orientasi: ${session.orientation}\n` : ""}Prompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`);
     runGenerate(chatId, msg, session, modelConfig);
   } else {
-    const inline_keyboard = [
-      [
-        { text: "⚡ Kling 2.6 Standard", callback_data: "model_kling-2-6-std" },
-        { text: "🔥 Kling 2.6 Pro", callback_data: "model_kling-2-6-pro" },
-      ],
-      [
-        { text: "🎯 Kling 2.1 Pro", callback_data: "model_kling-2-1-pro" },
-        { text: "👑 Kling 2.1 Master", callback_data: "model_kling-2-1-master" },
-      ],
-      [
-        { text: "🚀 Kling V3", callback_data: "model_kling-v3" },
-      ],
-      [
-        { text: "🌊 Wan 2.6 Pro", callback_data: "model_wan-2-6-pro" },
-        { text: "🌱 Seedance 1.5 Pro", callback_data: "model_seedance-1-5-pro" },
-      ],
-    ];
     bot.sendMessage(chatId, "Pilih model AI untuk generate video:", {
-      reply_markup: { inline_keyboard },
+      reply_markup: { inline_keyboard: getModelKeyboard() },
     });
   }
 });
@@ -1413,6 +1452,11 @@ bot.onText(/\/generate/, async (msg) => {
 bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
+
+  if (data === "noop") {
+    bot.answerCallbackQuery(query.id);
+    return;
+  }
 
   if (!data.startsWith("model_")) return;
 
