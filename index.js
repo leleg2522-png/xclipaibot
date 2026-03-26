@@ -63,6 +63,65 @@ if (!TELEGRAM_TOKEN) {
 
 const API_BASE = "https://api.freepik.com";
 const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || "").split(",").map(id => id.trim()).filter(Boolean);
+
+const MODELS = {
+  'kling-2-6-std': {
+    name: 'Kling 2.6 Standard (720p)',
+    emoji: '⚡',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-6-motion-control-std`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`,
+    requiresVideo: true,
+    motionControl: true,
+  },
+  'kling-2-6-pro': {
+    name: 'Kling 2.6 Pro (1080p)',
+    emoji: '🔥',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-6-motion-control-pro`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`,
+    requiresVideo: true,
+    motionControl: true,
+  },
+  'kling-2-1-pro': {
+    name: 'Kling 2.1 Pro (1080p)',
+    emoji: '🎯',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-1-motion-control-pro`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-1/${taskId}`,
+    requiresVideo: true,
+    motionControl: true,
+  },
+  'kling-2-1-master': {
+    name: 'Kling 2.1 Master',
+    emoji: '👑',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-1-master`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-1/${taskId}`,
+    requiresVideo: true,
+    motionControl: true,
+  },
+  'kling-v3': {
+    name: 'Kling V3',
+    emoji: '🚀',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v3-motion-control`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v3/${taskId}`,
+    requiresVideo: true,
+    motionControl: true,
+  },
+  'wan-2-6-pro': {
+    name: 'Wan 2.6 Pro',
+    emoji: '🌊',
+    submitUrl: `${API_BASE}/v1/ai/video/wan-v2-6-pro`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/wan-v2-6/${taskId}`,
+    requiresVideo: false,
+    motionControl: false,
+  },
+  'seedance-1-5-pro': {
+    name: 'Seedance 1.5 Pro',
+    emoji: '🌱',
+    submitUrl: `${API_BASE}/v1/ai/video/seedance-v1-5-pro`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/seedance-v1-5/${taskId}`,
+    requiresVideo: false,
+    motionControl: false,
+  },
+};
 const KEYS_PER_USER = 2;
 
 let VPS_PROXIES = [];
@@ -605,7 +664,7 @@ function resetSession(msg, fullReset = false) {
     session.videoFile = null;
     session.prompt = null;
     session.orientation = "video";
-    session.quality = "std";
+    session.selectedModel = null;
     session.isGenerating = false;
     session.loginStep = null;
     session.loginEmail = null;
@@ -626,15 +685,29 @@ bot.onText(/\/start/, (msg) => {
   }
   bot.sendMessage(
     msg.chat.id,
-`🎬 Kling 2.6 Motion Control Bot
+`🎬 AI Video Generator Bot
 
-Bot ini mentransfer gerakan dari video referensi ke gambar karakter menggunakan Kling Motion Control API.
+Bot ini menghasilkan video menggunakan berbagai model AI terbaik via Freepik API.
 
-Cara pakai:
+Model yang tersedia:
+⚡ Kling 2.6 Standard (720p) — Motion Control
+🔥 Kling 2.6 Pro (1080p) — Motion Control
+🎯 Kling 2.1 Pro (1080p) — Motion Control
+👑 Kling 2.1 Master — Motion Control
+🚀 Kling V3 — Motion Control
+🌊 Wan 2.6 Pro — Image to Video
+🌱 Seedance 1.5 Pro — Image to Video
+
+Cara pakai (Motion Control):
 1️⃣ Login dulu: /login email password
 2️⃣ Kirim foto karakter
 3️⃣ Kirim video referensi gerakan
-4️⃣ Ketik /generate untuk mulai
+4️⃣ Ketik /generate → pilih model
+
+Cara pakai (Image to Video):
+1️⃣ Login dulu: /login email password
+2️⃣ Kirim foto karakter
+3️⃣ Ketik /generate → pilih model Wan/Seedance
 
 Perintah:
 /start - Mulai ulang
@@ -643,15 +716,13 @@ Perintah:
 /generate - Generate video
 /prompt [teks] - Set prompt tambahan
 /orientation [video|image] - Set orientasi karakter
-/quality [std|pro] - Set kualitas (std = 720p, pro = 1080p)
 /status - Cek status session saat ini
 /reset - Reset session
 
 Catatan:
 • Harus login dan punya langganan bulanan aktif
 • Foto: min 300x300px, max 10MB (JPG/PNG/WEBP)
-• Video: durasi 3-30 detik, max 100MB (MP4/MOV/WEBM)
-• Orientasi "video" = max 30 detik, "image" = max 10 detik`
+• Video: durasi 3-30 detik, max 100MB (MP4/MOV/WEBM)`
   );
 });
 
@@ -768,7 +839,7 @@ bot.onText(/\/status/, async (msg) => {
     `Video: ${session.videoFile ? "Sudah ada" : "Belum"}`,
     `Prompt: ${session.prompt || "(kosong)"}`,
     `Orientasi: ${session.orientation}`,
-    `Kualitas: ${session.quality}`,
+    `Model: ${session.selectedModel ? (MODELS[session.selectedModel]?.name || session.selectedModel) : "(belum dipilih)"}`,
     `Generating: ${session.isGenerating ? "Ya" : "Tidak"}`,
     `Cooldown: ${session.userId ? (() => { const r = getCooldownRemaining(session.userId); return r > 0 ? `${Math.ceil(r / 60000)} menit lagi` : "Siap generate"; })() : "N/A"}`,
     `Generate hari ini: ${session.userId ? `${getDailyUsage(session.userId)}/${DAILY_LIMIT}` : "N/A"}`,
@@ -810,11 +881,8 @@ bot.onText(/\/orientation (video|image)/, (msg, match) => {
   bot.sendMessage(msg.chat.id, `Orientasi diset: ${session.orientation}`);
 });
 
-bot.onText(/\/quality (std|pro)/, (msg, match) => {
-  const session = getSession(msg);
-  session.quality = match[1];
-  const label = match[1] === "pro" ? "Pro (1080p)" : "Standard (720p)";
-  bot.sendMessage(msg.chat.id, `Kualitas diset: ${label}`);
+bot.onText(/\/quality/, (msg) => {
+  bot.sendMessage(msg.chat.id, "Kualitas kini terintegrasi dalam pilihan model.\n\nGunakan /generate dan pilih model yang kamu inginkan (misal: Kling 2.6 Standard = 720p, Kling 2.6 Pro = 1080p).");
 });
 
 bot.onText(/\/addkeys(.*)/, async (msg, match) => {
@@ -1053,25 +1121,26 @@ bot.on("document", async (msg) => {
   }
 });
 
-async function submitMotionControl(session) {
-  const quality = session.quality === "pro" ? "pro" : "std";
-  const url = `${API_BASE}/v1/ai/video/kling-v2-6-motion-control-${quality}`;
+async function submitVideo(session, modelConfig) {
+  const url = modelConfig.submitUrl;
 
   const imageUrl = session.imageFile.publicUrl;
-  const videoUrl = session.videoFile.publicUrl;
 
-  console.log(`[freepik] Submit quality=${quality}`);
+  console.log(`[freepik] Submit model=${session.selectedModel}`);
   console.log(`[freepik] image_url: ${imageUrl}`);
-  console.log(`[freepik] video_url: ${videoUrl}`);
 
   const webhookUrl = PUBLIC_DOMAIN ? `https://${PUBLIC_DOMAIN}/webhook/freepik` : null;
 
   const body = {
     image_url: imageUrl,
-    video_url: videoUrl,
-    character_orientation: session.orientation || "video",
-    cfg_scale: 0.5,
   };
+
+  if (modelConfig.motionControl && session.videoFile) {
+    body.video_url = session.videoFile.publicUrl;
+    body.character_orientation = session.orientation || "video";
+    body.cfg_scale = 0.5;
+    console.log(`[freepik] video_url: ${body.video_url}`);
+  }
 
   if (webhookUrl) {
     body.webhook = webhookUrl;
@@ -1144,9 +1213,9 @@ async function submitMotionControl(session) {
   throw new Error("Semua API key tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey) {
+async function checkTaskStatus(taskId, apiKey, modelConfig) {
   if (!apiKey) throw new Error("API key is required for polling");
-  const url = `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`;
+  const url = modelConfig ? modelConfig.statusUrl(taskId) : `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`;
   const response = await makeFreepikRequest('GET', url, apiKey);
   return response.data;
 }
@@ -1169,7 +1238,7 @@ function waitForWebhook(taskId, timeoutMs = 25 * 60 * 1000) {
   });
 }
 
-async function pollForResult(chatId, taskId, apiKey) {
+async function pollForResult(chatId, taskId, apiKey, modelConfig) {
   const useWebhook = PUBLIC_DOMAIN && pendingTasks.has(taskId);
   const maxWaitMs = 25 * 60 * 1000;
   const pollInterval = useWebhook ? 30000 : 15000;
@@ -1210,7 +1279,7 @@ async function pollForResult(chatId, taskId, apiKey) {
     }
 
     try {
-      const rawResult = await checkTaskStatus(taskId, apiKey);
+      const rawResult = await checkTaskStatus(taskId, apiKey, modelConfig);
       const result = rawResult?.data || rawResult;
       const status = (result?.status || "").toUpperCase();
       console.log(`[freepik] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
@@ -1285,20 +1354,26 @@ bot.onText(/\/generate/, async (msg) => {
     return;
   }
 
-  if (!session.videoFile) {
-    bot.sendMessage(chatId, "Video referensi belum ada. Kirim video terlebih dahulu.");
-    return;
-  }
+  const inline_keyboard = [
+    [
+      { text: "⚡ Kling 2.6 Standard", callback_data: "model_kling-2-6-std" },
+      { text: "🔥 Kling 2.6 Pro", callback_data: "model_kling-2-6-pro" },
+    ],
+    [
+      { text: "🎯 Kling 2.1 Pro", callback_data: "model_kling-2-1-pro" },
+      { text: "👑 Kling 2.1 Master", callback_data: "model_kling-2-1-master" },
+    ],
+    [
+      { text: "🚀 Kling V3", callback_data: "model_kling-v3" },
+    ],
+    [
+      { text: "🌊 Wan 2.6 Pro", callback_data: "model_wan-2-6-pro" },
+      { text: "🌱 Seedance 1.5 Pro", callback_data: "model_seedance-1-5-pro" },
+    ],
+  ];
 
-  bot.sendMessage(chatId, "Pilih kualitas video:", {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: "⚡ Standard (720p)", callback_data: "quality_std" },
-          { text: "🔥 Pro (1080p)", callback_data: "quality_pro" },
-        ],
-      ],
-    },
+  bot.sendMessage(chatId, "Pilih model AI untuk generate video:", {
+    reply_markup: { inline_keyboard },
   });
 });
 
@@ -1306,7 +1381,15 @@ bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
 
-  if (!data.startsWith("quality_")) return;
+  if (!data.startsWith("model_")) return;
+
+  const modelKey = data.replace("model_", "");
+  const modelConfig = MODELS[modelKey];
+
+  if (!modelConfig) {
+    bot.answerCallbackQuery(query.id, { text: "Model tidak dikenal." });
+    return;
+  }
 
   const msg = { chat: query.message.chat, from: query.from };
   const session = getSession(msg);
@@ -1321,23 +1404,31 @@ bot.on("callback_query", async (query) => {
     return;
   }
 
-  if (!session.imageFile || !session.videoFile) {
-    bot.answerCallbackQuery(query.id, { text: "Foto atau video belum lengkap." });
+  if (!session.imageFile) {
+    bot.answerCallbackQuery(query.id, { text: "Foto karakter belum ada." });
     return;
   }
 
-  const quality = data === "quality_pro" ? "pro" : "std";
-  session.quality = quality;
+  if (modelConfig.requiresVideo && !session.videoFile) {
+    bot.answerCallbackQuery(query.id, { text: "Model ini butuh video referensi." });
+    bot.sendMessage(chatId, `Model ${modelConfig.emoji} ${modelConfig.name} membutuhkan video referensi gerakan.\n\nKirim video dulu lalu ketik /generate lagi.`);
+    return;
+  }
+
+  session.selectedModel = modelKey;
   session.isGenerating = true;
 
-  const qualityLabel = quality === "pro" ? "Pro (1080p)" : "Standard (720p)";
-
   bot.answerCallbackQuery(query.id);
-  try { await bot.editMessageText(`Kualitas: ${qualityLabel}\n\nMemulai generate motion control video...\nOrientasi: ${session.orientation}\nPrompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`, { chat_id: chatId, message_id: query.message.message_id }); } catch (e) {}
+  try {
+    await bot.editMessageText(
+      `Model: ${modelConfig.emoji} ${modelConfig.name}\n\nMemulai generate video...\n${modelConfig.motionControl ? `Orientasi: ${session.orientation}\n` : ""}Prompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`,
+      { chat_id: chatId, message_id: query.message.message_id }
+    );
+  } catch (e) {}
 
   try {
     const submitStart = Date.now();
-    const submitResult = await submitMotionControl(session);
+    const submitResult = await submitVideo(session, modelConfig);
     const submitTime = ((Date.now() - submitStart) / 1000).toFixed(1);
     console.log("[freepik] Full submit response:", JSON.stringify(submitResult));
     const taskId = submitResult?.data?.task_id || submitResult?.task_id || submitResult?.id;
@@ -1355,14 +1446,14 @@ bot.on("callback_query", async (query) => {
     incrementDailyUsage(session.userId);
     const remaining = getDailyRemaining(session.userId);
     const webhookActive = !!PUBLIC_DOMAIN;
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nJob ID: ${taskId}\nCooldown: 10 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\nMode: ${webhookActive ? 'Webhook + Polling' : 'Polling'}\n\nMenunggu hasil...`);
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${taskId}\nCooldown: 10 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\nMode: ${webhookActive ? 'Webhook + Polling' : 'Polling'}\n\nMenunggu hasil...`);
 
     if (webhookActive) {
       waitForWebhook(taskId);
     }
 
     const pollStart = Date.now();
-    const result = await pollForResult(chatId, taskId, session.apiKey);
+    const result = await pollForResult(chatId, taskId, session.apiKey, modelConfig);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
     console.log(`[freepik] Job ${taskId} polling finished in ${pollTime}s`);
 
@@ -1404,7 +1495,7 @@ bot.on("callback_query", async (query) => {
               cleanupFile(tempPath);
             } else {
               await bot.sendVideo(chatId, tempPath, {
-                caption: `Motion control video selesai! (${qualityLabel})`,
+                caption: `Video selesai! Model: ${modelConfig.name}`,
               });
               cleanupFile(tempPath);
               console.log("sendVideo success");
@@ -1440,6 +1531,7 @@ bot.on("polling_error", (err) => {
   console.error("Polling error:", err.code, err.message);
 });
 
-console.log("Bot Telegram Kling Motion Control (Freepik API) sudah berjalan!");
+console.log("Bot Telegram AI Video Generator (Freepik API) sudah berjalan!");
+console.log(`Model tersedia: ${Object.keys(MODELS).join(", ")}`);
 console.log(`Admin IDs: ${ADMIN_IDS.length > 0 ? ADMIN_IDS.join(", ") : "(tidak diset - /addkeys dan /poolstatus tidak bisa diakses)"}`);
 console.log(`Keys per user: ${KEYS_PER_USER}`);
