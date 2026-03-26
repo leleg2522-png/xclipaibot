@@ -784,9 +784,31 @@ async function processLogin(chatId, msg, session, loginInput, password) {
     const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
       day: "numeric", month: "long", year: "numeric",
     });
+
     bot.sendMessage(
       chatId,
-      `Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan: ${subResult.planName} (Aktif)\nBerlaku sampai: ${expDate}\n\nSilakan kirim foto dan video, lalu ketik /generate.`
+      `✅ Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan: ${subResult.planName} (Aktif)\nBerlaku sampai: ${expDate}\n\nPilih model AI yang ingin kamu gunakan:`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "⚡ Kling 2.6 Standard", callback_data: "model_kling-2-6-std" },
+              { text: "🔥 Kling 2.6 Pro", callback_data: "model_kling-2-6-pro" },
+            ],
+            [
+              { text: "🎯 Kling 2.1 Pro", callback_data: "model_kling-2-1-pro" },
+              { text: "👑 Kling 2.1 Master", callback_data: "model_kling-2-1-master" },
+            ],
+            [
+              { text: "🚀 Kling V3", callback_data: "model_kling-v3" },
+            ],
+            [
+              { text: "🌊 Wan 2.6 Pro", callback_data: "model_wan-2-6-pro" },
+              { text: "🌱 Seedance 1.5 Pro", callback_data: "model_seedance-1-5-pro" },
+            ],
+          ],
+        },
+      }
     );
   } catch (err) {
     console.error("Login error:", err);
@@ -1025,11 +1047,11 @@ bot.on("photo", async (msg) => {
     cleanupFile(session.imageFile?.localPath);
     session.imageFile = await downloadTelegramFile(photo.file_id);
 
-    let reply = "Foto karakter diterima!";
-    if (!session.videoFile) {
-      reply += "\n\nSekarang kirim video referensi gerakan.";
+    let reply = "✅ Foto karakter diterima!";
+    if (session.videoFile) {
+      reply += "\n\nFoto + video sudah lengkap. Ketik /generate untuk mulai.";
     } else {
-      reply += "\n\nFoto dan video sudah lengkap! Ketik /generate untuk mulai.";
+      reply += "\n\nKetik /generate untuk pilih model.\n\n💡 Jika pakai model Kling (Motion Control), kirim video referensi gerakan dulu sebelum /generate.";
     }
     bot.sendMessage(chatId, reply);
   } catch (err) {
@@ -1075,11 +1097,11 @@ bot.on("animation", async (msg) => {
     cleanupFile(session.videoFile?.localPath);
     session.videoFile = await downloadTelegramFile(msg.animation.file_id);
 
-    let reply = "GIF/animasi diterima sebagai video referensi!";
+    let reply = "✅ GIF/animasi diterima sebagai video referensi!";
     if (!session.imageFile) {
-      reply += "\n\nSekarang kirim foto karakter.";
+      reply += "\n\nSekarang kirim foto karakter juga.";
     } else {
-      reply += "\n\nFoto dan video sudah lengkap! Ketik /generate untuk mulai.";
+      reply += "\n\nFoto + video sudah lengkap. Ketik /generate untuk mulai.";
     }
     bot.sendMessage(chatId, reply);
   } catch (err) {
@@ -1097,11 +1119,11 @@ bot.on("document", async (msg) => {
     if (mimeType.startsWith("image/")) {
       cleanupFile(session.imageFile?.localPath);
       session.imageFile = await downloadTelegramFile(msg.document.file_id);
-      let reply = "Foto karakter diterima (sebagai file)!";
-      if (!session.videoFile) {
-        reply += "\n\nSekarang kirim video referensi gerakan.";
+      let reply = "✅ Foto karakter diterima (sebagai file)!";
+      if (session.videoFile) {
+        reply += "\n\nFoto + video sudah lengkap. Ketik /generate untuk mulai.";
       } else {
-        reply += "\n\nFoto dan video sudah lengkap! Ketik /generate untuk mulai.";
+        reply += "\n\nKetik /generate untuk pilih model.\n\n💡 Jika pakai model Kling (Motion Control), kirim video referensi gerakan dulu sebelum /generate.";
       }
       bot.sendMessage(chatId, reply);
     } else if (mimeType.startsWith("video/")) {
@@ -1354,27 +1376,38 @@ bot.onText(/\/generate/, async (msg) => {
     return;
   }
 
-  const inline_keyboard = [
-    [
-      { text: "⚡ Kling 2.6 Standard", callback_data: "model_kling-2-6-std" },
-      { text: "🔥 Kling 2.6 Pro", callback_data: "model_kling-2-6-pro" },
-    ],
-    [
-      { text: "🎯 Kling 2.1 Pro", callback_data: "model_kling-2-1-pro" },
-      { text: "👑 Kling 2.1 Master", callback_data: "model_kling-2-1-master" },
-    ],
-    [
-      { text: "🚀 Kling V3", callback_data: "model_kling-v3" },
-    ],
-    [
-      { text: "🌊 Wan 2.6 Pro", callback_data: "model_wan-2-6-pro" },
-      { text: "🌱 Seedance 1.5 Pro", callback_data: "model_seedance-1-5-pro" },
-    ],
-  ];
+  const modelConfig = session.selectedModel ? MODELS[session.selectedModel] : null;
 
-  bot.sendMessage(chatId, "Pilih model AI untuk generate video:", {
-    reply_markup: { inline_keyboard },
-  });
+  if (modelConfig) {
+    if (modelConfig.requiresVideo && !session.videoFile) {
+      bot.sendMessage(chatId, `Model ${modelConfig.emoji} ${modelConfig.name} membutuhkan video referensi gerakan.\n\nKirim video dulu lalu ketik /generate lagi.`);
+      return;
+    }
+    session.isGenerating = true;
+    bot.sendMessage(chatId, `Model: ${modelConfig.emoji} ${modelConfig.name}\n\nMemulai generate video...\n${modelConfig.motionControl ? `Orientasi: ${session.orientation}\n` : ""}Prompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`);
+    runGenerate(chatId, msg, session, modelConfig);
+  } else {
+    const inline_keyboard = [
+      [
+        { text: "⚡ Kling 2.6 Standard", callback_data: "model_kling-2-6-std" },
+        { text: "🔥 Kling 2.6 Pro", callback_data: "model_kling-2-6-pro" },
+      ],
+      [
+        { text: "🎯 Kling 2.1 Pro", callback_data: "model_kling-2-1-pro" },
+        { text: "👑 Kling 2.1 Master", callback_data: "model_kling-2-1-master" },
+      ],
+      [
+        { text: "🚀 Kling V3", callback_data: "model_kling-v3" },
+      ],
+      [
+        { text: "🌊 Wan 2.6 Pro", callback_data: "model_wan-2-6-pro" },
+        { text: "🌱 Seedance 1.5 Pro", callback_data: "model_seedance-1-5-pro" },
+      ],
+    ];
+    bot.sendMessage(chatId, "Pilih model AI untuk generate video:", {
+      reply_markup: { inline_keyboard },
+    });
+  }
 });
 
 bot.on("callback_query", async (query) => {
@@ -1404,28 +1437,34 @@ bot.on("callback_query", async (query) => {
     return;
   }
 
+  session.selectedModel = modelKey;
+  bot.answerCallbackQuery(query.id);
+
   if (!session.imageFile) {
-    bot.answerCallbackQuery(query.id, { text: "Foto karakter belum ada." });
+    let instruksi = `${modelConfig.emoji} Model dipilih: *${modelConfig.name}*\n\n`;
+    if (modelConfig.motionControl) {
+      instruksi += `Kirim:\n1️⃣ Foto karakter\n2️⃣ Video referensi gerakan\n\nLalu ketik /generate untuk mulai.`;
+    } else {
+      instruksi += `Kirim:\n1️⃣ Foto karakter\n\nLalu ketik /generate untuk mulai.`;
+    }
+    try {
+      await bot.editMessageText(instruksi, { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" });
+    } catch (e) {
+      bot.sendMessage(chatId, instruksi, { parse_mode: "Markdown" });
+    }
     return;
   }
 
   if (modelConfig.requiresVideo && !session.videoFile) {
-    bot.answerCallbackQuery(query.id, { text: "Model ini butuh video referensi." });
     bot.sendMessage(chatId, `Model ${modelConfig.emoji} ${modelConfig.name} membutuhkan video referensi gerakan.\n\nKirim video dulu lalu ketik /generate lagi.`);
     return;
   }
 
-  session.selectedModel = modelKey;
   session.isGenerating = true;
+  runGenerate(chatId, msg, session, modelConfig);
+});
 
-  bot.answerCallbackQuery(query.id);
-  try {
-    await bot.editMessageText(
-      `Model: ${modelConfig.emoji} ${modelConfig.name}\n\nMemulai generate video...\n${modelConfig.motionControl ? `Orientasi: ${session.orientation}\n` : ""}Prompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`,
-      { chat_id: chatId, message_id: query.message.message_id }
-    );
-  } catch (e) {}
-
+async function runGenerate(chatId, msg, session, modelConfig) {
   try {
     const submitStart = Date.now();
     const submitResult = await submitVideo(session, modelConfig);
@@ -1525,7 +1564,7 @@ bot.on("callback_query", async (query) => {
     if (session.apiKey) unlockKey(session.apiKey);
     session.isGenerating = false;
   }
-});
+}
 
 bot.on("polling_error", (err) => {
   console.error("Polling error:", err.code, err.message);
