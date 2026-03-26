@@ -139,30 +139,6 @@ const MODELS = {
     requiresVideo: true,
     motionControl: true,
   },
-  'kling-2-1-pro-mc': {
-    name: 'Kling 2.1 Pro MC',
-    emoji: '🎯',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-1-motion-control-pro`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-1/${taskId}`,
-    requiresVideo: true,
-    motionControl: true,
-  },
-  'kling-2-1-master-mc': {
-    name: 'Kling 2.1 Master MC',
-    emoji: '👑',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-1-master`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-1/${taskId}`,
-    requiresVideo: true,
-    motionControl: true,
-  },
-  'kling-v3-mc': {
-    name: 'Kling V3 MC',
-    emoji: '🚀',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v3-motion-control`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v3/${taskId}`,
-    requiresVideo: true,
-    motionControl: true,
-  },
 };
 const KEYS_PER_USER = 2;
 
@@ -190,13 +166,6 @@ function getModelKeyboard() {
     [
       { text: "⚡ Kling 2.6 Std MC", callback_data: "model_kling-2-6-std-mc" },
       { text: "🔥 Kling 2.6 Pro MC", callback_data: "model_kling-2-6-pro-mc" },
-    ],
-    [
-      { text: "🎯 Kling 2.1 Pro MC", callback_data: "model_kling-2-1-pro-mc" },
-      { text: "👑 Kling 2.1 Master MC", callback_data: "model_kling-2-1-master-mc" },
-    ],
-    [
-      { text: "🚀 Kling V3 MC", callback_data: "model_kling-v3-mc" },
     ],
   ];
 }
@@ -772,8 +741,6 @@ Bot ini menghasilkan video menggunakan berbagai model AI terbaik via Freepik API
 
 🎥 Motion Control (foto + video referensi):
 ⚡ Kling 2.6 Std MC | 🔥 Kling 2.6 Pro MC
-🎯 Kling 2.1 Pro MC | 👑 Kling 2.1 Master MC
-🚀 Kling V3 MC
 
 Cara pakai Image to Video:
 1️⃣ /login → pilih model
