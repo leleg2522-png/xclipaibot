@@ -712,6 +712,8 @@ function resetSession(msg, fullReset = false) {
     session.imageFile = null;
     session.videoFile = null;
     session.prompt = null;
+    session.duration = "5";
+    session.awaitingPrompt = false;
     session.orientation = "video";
     session.motionStrength = 0.5;
     session.selectedModel = null;
@@ -902,8 +904,6 @@ bot.on("text", async (msg) => {
   const chatId = msg.chat.id;
   const session = getSession(msg);
 
-  if (!session.loginStep) return;
-
   if (session.loginStep === "email") {
     session.loginEmail = msg.text.trim();
     session.loginStep = "password";
@@ -915,6 +915,22 @@ bot.on("text", async (msg) => {
     const password = msg.text.trim();
     try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
     await processLogin(chatId, msg, session, session.loginEmail, password);
+    return;
+  }
+
+  if (session.awaitingPrompt) {
+    session.prompt = msg.text.trim();
+    session.awaitingPrompt = false;
+    bot.sendMessage(chatId, `✅ Prompt: "${session.prompt}"\n\nPilih durasi video:`, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "⏱ 5 Detik", callback_data: "dur_5" },
+            { text: "⏱ 10 Detik", callback_data: "dur_10" },
+          ],
+        ],
+      },
+    });
     return;
   }
 });
@@ -1075,13 +1091,20 @@ bot.on("photo", async (msg) => {
     cleanupFile(session.imageFile?.localPath);
     session.imageFile = await downloadTelegramFile(photo.file_id);
 
-    let reply = "✅ Foto karakter diterima!";
-    if (session.videoFile) {
-      reply += "\n\nFoto + video sudah lengkap. Ketik /generate untuk mulai.";
+    const modelConfig = session.selectedModel ? MODELS[session.selectedModel] : null;
+
+    if (modelConfig && modelConfig.motionControl) {
+      let reply = "✅ Foto karakter diterima!";
+      if (session.videoFile) {
+        reply += "\n\nFoto + video sudah lengkap. Ketik /generate untuk mulai.";
+      } else {
+        reply += "\n\nSekarang kirim video referensi gerakan, lalu ketik /generate.";
+      }
+      bot.sendMessage(chatId, reply);
     } else {
-      reply += "\n\nKetik /generate untuk pilih model.\n\n💡 Jika pakai model Kling (Motion Control), kirim video referensi gerakan dulu sebelum /generate.";
+      session.awaitingPrompt = true;
+      bot.sendMessage(chatId, "✅ Foto karakter diterima!\n\n✏️ Ketik prompt untuk video (deskripsi gerakan/adegan yang diinginkan):");
     }
-    bot.sendMessage(chatId, reply);
   } catch (err) {
     console.error("Error processing photo:", err.message);
     bot.sendMessage(chatId, "Gagal memproses foto. Coba kirim ulang.");
@@ -1195,7 +1218,7 @@ async function submitVideo(session, modelConfig) {
 
   if (!modelConfig.motionControl) {
     body.prompt = session.prompt || "Generate a creative video from this image";
-    body.duration = "5";
+    body.duration = session.duration || "5";
     body.cfg_scale = 0.5;
   }
 
@@ -1415,7 +1438,7 @@ bot.onText(/\/generate/, async (msg) => {
       return;
     }
     session.isGenerating = true;
-    bot.sendMessage(chatId, `Model: ${modelConfig.emoji} ${modelConfig.name}\n\nMemulai generate video...\n${modelConfig.motionControl ? `Orientasi: ${session.orientation}\n` : ""}Prompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`);
+    bot.sendMessage(chatId, `Model: ${modelConfig.emoji} ${modelConfig.name}\n\nMemulai generate video...\n${modelConfig.motionControl ? `Orientasi: ${session.orientation}\n` : `Durasi: ${session.duration || "5"} detik\n`}Prompt: ${session.prompt || "(default)"}\n\nProses ini bisa memakan waktu 3-8 menit.`);
     runGenerate(chatId, msg, session, modelConfig);
   } else {
     bot.sendMessage(chatId, "Pilih model AI untuk generate video:", {
@@ -1430,6 +1453,23 @@ bot.on("callback_query", async (query) => {
 
   if (data === "noop") {
     bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === "dur_5" || data === "dur_10") {
+    const session = getSession({ chat: query.message.chat, from: query.from });
+    session.duration = data === "dur_5" ? "5" : "10";
+    bot.answerCallbackQuery(query.id);
+    const modelConfig = session.selectedModel ? MODELS[session.selectedModel] : null;
+    const modelText = modelConfig ? `${modelConfig.emoji} ${modelConfig.name}` : "belum dipilih";
+    try {
+      await bot.editMessageText(
+        `✅ Prompt: "${session.prompt}"\n⏱ Durasi: ${session.duration} detik\n\nModel: ${modelText}\n\nSemua siap! Ketik /generate untuk mulai.`,
+        { chat_id: chatId, message_id: query.message.message_id }
+      );
+    } catch (e) {
+      bot.sendMessage(chatId, `⏱ Durasi: ${session.duration} detik\n\nSemua siap! Ketik /generate untuk mulai.`);
+    }
     return;
   }
 
