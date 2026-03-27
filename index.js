@@ -527,7 +527,15 @@ async function downloadTelegramFile(fileId) {
   const filename = crypto.randomBytes(16).toString("hex") + ext;
   const localPath = path.join(UPLOAD_DIR, filename);
 
-  const response = await axios.get(telegramUrl, { responseType: "stream" });
+  const dlConfig = { responseType: "stream" };
+  if (VPS_PROXIES.length > 0) {
+    const proxy = VPS_PROXIES[0];
+    const proxyUrl = buildProxyUrl(proxy);
+    dlConfig.httpsAgent = new HttpsProxyAgent(proxyUrl, { rejectUnauthorized: false });
+    dlConfig.proxy = false;
+    console.log(`[PROXY] Downloading Telegram file via ${proxy.host}:${proxy.port}`);
+  }
+  const response = await axios.get(telegramUrl, dlConfig);
   const writer = fs.createWriteStream(localPath);
   response.data.pipe(writer);
 
@@ -1529,10 +1537,18 @@ async function runGenerate(chatId, msg, session, modelConfig) {
         for (const videoUrl of uniqueUrls) {
           try {
             console.log("Downloading video:", videoUrl.substring(0, 120));
-            const videoResponse = await axios.get(videoUrl, {
+            const dlConfig = {
               responseType: "arraybuffer",
               timeout: 120000,
-            });
+            };
+            if (VPS_PROXIES.length > 0) {
+              const proxy = VPS_PROXIES[0];
+              const proxyUrl = buildProxyUrl(proxy);
+              dlConfig.httpsAgent = new HttpsProxyAgent(proxyUrl, { rejectUnauthorized: false });
+              dlConfig.proxy = false;
+              console.log(`[PROXY] Downloading video via ${proxy.host}:${proxy.port}`);
+            }
+            const videoResponse = await axios.get(videoUrl, dlConfig);
             const tempPath = path.join(UPLOAD_DIR, `result_${Date.now()}.mp4`);
             fs.writeFileSync(tempPath, videoResponse.data);
             const fileSizeMB = fs.statSync(tempPath).size / (1024 * 1024);
