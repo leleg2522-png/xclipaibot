@@ -1536,37 +1536,10 @@ async function runGenerate(chatId, msg, session, modelConfig) {
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
           try {
-            console.log("Downloading video:", videoUrl.substring(0, 120));
-            const dlConfig = {
-              responseType: "arraybuffer",
-              timeout: 120000,
-            };
-            if (VPS_PROXIES.length > 0) {
-              const proxy = VPS_PROXIES[0];
-              const proxyUrl = buildProxyUrl(proxy);
-              dlConfig.httpsAgent = new HttpsProxyAgent(proxyUrl, { rejectUnauthorized: false });
-              dlConfig.proxy = false;
-              console.log(`[PROXY] Downloading video via ${proxy.host}:${proxy.port}`);
-            }
-            const videoResponse = await axios.get(videoUrl, dlConfig);
-            const tempPath = path.join(UPLOAD_DIR, `result_${Date.now()}.mp4`);
-            fs.writeFileSync(tempPath, videoResponse.data);
-            const fileSizeMB = fs.statSync(tempPath).size / (1024 * 1024);
-            console.log(`Video downloaded: ${fileSizeMB.toFixed(2)} MB`);
-
-            if (fileSizeMB > 50) {
-              await bot.sendMessage(chatId, `Video terlalu besar untuk Telegram (${fileSizeMB.toFixed(1)}MB). Download di sini:\n${videoUrl}`);
-              cleanupFile(tempPath);
-            } else {
-              await bot.sendVideo(chatId, tempPath, {
-                caption: `Video selesai! Model: ${modelConfig.name}`,
-              });
-              cleanupFile(tempPath);
-              console.log("sendVideo success");
-            }
+            await bot.sendMessage(chatId, `✅ Video selesai! Model: ${modelConfig.name}\n\n🔗 Download di sini:\n${videoUrl}`);
+            console.log("[freepik] Sent video link to user:", videoUrl.substring(0, 120));
           } catch (sendErr) {
-            console.error("sendVideo failed:", sendErr.message);
-            await bot.sendMessage(chatId, `Video selesai! Download di sini:\n${videoUrl}`);
+            console.error("sendMessage failed:", sendErr.message);
           }
         }
       } else {
