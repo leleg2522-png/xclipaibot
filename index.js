@@ -1193,13 +1193,15 @@ async function submitVideo(session, modelConfig) {
     console.log(`[freepik] video_url: ${body.video_url}`);
   }
 
+  if (!modelConfig.motionControl) {
+    body.prompt = session.prompt || "Generate a creative video from this image";
+    body.duration = "5";
+    body.cfg_scale = 0.5;
+  }
+
   if (webhookUrl) {
     body.webhook_url = webhookUrl;
     console.log(`[freepik] Webhook URL: ${webhookUrl}`);
-  }
-
-  if (session.prompt) {
-    body.prompt = session.prompt;
   }
 
   const userKeys = await assignKeysToUser(session.userId);
