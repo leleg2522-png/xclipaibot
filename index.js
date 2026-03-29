@@ -656,8 +656,8 @@ async function checkSubscription(userId) {
       const createdAt = new Date(sub.created_at || sub.expired_at);
       const expiredAt = new Date(sub.expired_at);
       const durationDays = (expiredAt - createdAt) / (1000 * 60 * 60 * 24);
-      if (durationDays < 7) {
-        return { active: false, reason: "Bot ini hanya untuk langganan mingguan atau bulanan. Paket harian tidak bisa menggunakan bot ini." };
+      if (durationDays < 3) {
+        return { active: false, reason: "Bot ini hanya untuk langganan minimal 3 hari. Paket harian tidak bisa menggunakan bot ini." };
       }
       return {
         active: true,
@@ -681,8 +681,8 @@ async function checkSubscription(userId) {
         const expiredAt = new Date(sub.expired_at);
         return (expiredAt - createdAt) / (1000 * 60 * 60 * 24);
       })();
-      if (durationDays < 7) {
-        return { active: false, reason: "Bot ini hanya untuk langganan mingguan atau bulanan. Paket harian tidak bisa menggunakan bot ini." };
+      if (durationDays < 3) {
+        return { active: false, reason: "Bot ini hanya untuk langganan minimal 3 hari. Paket harian tidak bisa menggunakan bot ini." };
       }
       return {
         active: true,
@@ -691,7 +691,7 @@ async function checkSubscription(userId) {
       };
     }
 
-    return { active: false, reason: "Kamu belum punya langganan aktif (mingguan/bulanan). Hubungi admin untuk berlangganan." };
+    return { active: false, reason: "Kamu belum punya langganan aktif (minimal 3 hari). Hubungi admin untuk berlangganan." };
   } catch (err) {
     console.error("Subscription check error:", err.message);
     return { active: false, reason: "Gagal mengecek langganan." };
