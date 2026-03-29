@@ -161,6 +161,9 @@ function getModelKeyboard() {
   return [
     [{ text: "── 🎬 Image to Video ──", callback_data: "noop" }],
     [
+      { text: "💎 Kling 3.0 Pro", callback_data: "model_kling-3-pro" },
+    ],
+    [
       { text: "🔥 Kling 2.6 Pro", callback_data: "model_kling-2-6-pro" },
       { text: "⚡ Kling 2.5 Pro", callback_data: "model_kling-2-5-pro" },
     ],
