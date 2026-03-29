@@ -74,6 +74,7 @@ const MODELS = {
     imageField: 'image',
     requiresVideo: false,
     motionControl: false,
+    hasAudio: true,
   },
   'kling-2-5-pro': {
     name: 'Kling 2.5 Pro',
@@ -129,6 +130,7 @@ const MODELS = {
     imageField: 'image_url',
     requiresVideo: true,
     motionControl: true,
+    hasAudio: true,
   },
   'kling-2-6-pro-mc': {
     name: 'Kling 2.6 Pro MC',
@@ -138,6 +140,7 @@ const MODELS = {
     imageField: 'image_url',
     requiresVideo: true,
     motionControl: true,
+    hasAudio: true,
   },
 };
 const KEYS_PER_USER = 2;
@@ -1220,6 +1223,10 @@ async function submitVideo(session, modelConfig) {
     body.prompt = session.prompt || "Generate a creative video from this image";
     body.duration = session.duration || "5";
     body.cfg_scale = 0.5;
+  }
+
+  if (modelConfig.hasAudio) {
+    body.has_audio = true;
   }
 
   if (webhookUrl) {
