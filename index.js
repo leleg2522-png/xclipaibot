@@ -543,14 +543,8 @@ async function downloadTelegramFile(fileId) {
   const filename = crypto.randomBytes(16).toString("hex") + ext;
   const localPath = path.join(UPLOAD_DIR, filename);
 
-  const dlConfig = { responseType: "stream" };
-  if (VPS_PROXIES.length > 0) {
-    const proxy = VPS_PROXIES[0];
-    const proxyUrl = buildProxyUrl(proxy);
-    dlConfig.httpsAgent = new HttpsProxyAgent(proxyUrl, { rejectUnauthorized: false });
-    dlConfig.proxy = false;
-    console.log(`[PROXY] Downloading Telegram file via ${proxy.host}:${proxy.port}`);
-  }
+  const dlConfig = { responseType: "stream", timeout: 60000 };
+  console.log(`[DIRECT] Downloading Telegram file (no proxy for file downloads)`);
   const response = await axios.get(telegramUrl, dlConfig);
   const writer = fs.createWriteStream(localPath);
   response.data.pipe(writer);
