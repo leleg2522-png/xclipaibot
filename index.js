@@ -1233,8 +1233,8 @@ async function submitVideo(session, modelConfig) {
   }
 
   if (modelConfig.hasAudio) {
-    body.has_audio = true;
-    console.log(`[freepik] Audio enabled: has_audio=true`);
+    body.generate_audio = true;
+    console.log(`[freepik] Audio enabled: generate_audio=true`);
   }
 
   if (webhookUrl) {
