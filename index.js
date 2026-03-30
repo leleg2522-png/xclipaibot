@@ -1234,12 +1234,15 @@ async function submitVideo(session, modelConfig) {
 
   if (modelConfig.hasAudio) {
     body.has_audio = true;
+    console.log(`[freepik] Audio enabled: has_audio=true`);
   }
 
   if (webhookUrl) {
     body.webhook_url = webhookUrl;
     console.log(`[freepik] Webhook URL: ${webhookUrl}`);
   }
+
+  console.log(`[freepik] Request body:`, JSON.stringify(body));
 
   const userKeys = await assignKeysToUser(session.userId);
   if (userKeys.length === 0) {
