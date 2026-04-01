@@ -188,7 +188,16 @@ function initProxy() {
   if (bulkVar) {
     bulkVar.split(',').map(e => e.trim()).filter(Boolean).forEach(entry => {
       const parts = entry.split(':');
-      if (parts.length >= 2) {
+      if (parts.length >= 4) {
+        const host = parts[0];
+        const port = parseInt(parts[1]);
+        const username = parts[2];
+        const password = parts[3];
+        VPS_PROXIES.push({ host, port, username, password });
+        for (let p = port + 1; p <= port + 9; p++) {
+          VPS_PROXIES.push({ host, port: p, username, password });
+        }
+      } else if (parts.length >= 2) {
         VPS_PROXIES.push({
           host: parts[0],
           port: parseInt(parts[1]),
