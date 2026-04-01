@@ -513,7 +513,7 @@ function getPublicFileUrl(filename) {
   return `http://localhost:${FILE_SERVER_PORT}/files/${filename}`;
 }
 
-const COOLDOWN_MS = 10 * 60 * 1000;
+const COOLDOWN_MS = 5 * 60 * 1000;
 const DAILY_LIMIT = 30;
 const userCooldowns = new Map();
 const userDailyUsage = new Map();
@@ -1580,7 +1580,7 @@ async function runGenerate(chatId, msg, session, modelConfig) {
     incrementDailyUsage(session.userId);
     const remaining = getDailyRemaining(session.userId);
     const webhookActive = !!PUBLIC_DOMAIN;
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${taskId}\nCooldown: 10 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\nMode: ${webhookActive ? 'Webhook + Polling' : 'Polling'}\n\nMenunggu hasil...`);
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${taskId}\nCooldown: 5 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\nMode: ${webhookActive ? 'Webhook + Polling' : 'Polling'}\n\nMenunggu hasil...`);
 
     if (webhookActive) {
       waitForWebhook(taskId);
