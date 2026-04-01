@@ -300,7 +300,17 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
     }
   }
 
-  throw new Error('Proxy gagal setelah semua percobaan. Coba lagi nanti.');
+  console.log(`[PROXY] All ${maxAttempts} proxy attempts failed, trying DIRECT connection...`);
+  try {
+    const directConfig = { method, url, headers: freepikHeaders(apiKey), timeout: 120000 };
+    if (body) directConfig.data = body;
+    const resp = await axios(directConfig);
+    console.log(`[DIRECT] Success without proxy`);
+    return resp;
+  } catch (directErr) {
+    console.error(`[DIRECT] Also failed:`, directErr.message);
+    throw directErr;
+  }
 }
 const lockedKeys = new Set();
 
