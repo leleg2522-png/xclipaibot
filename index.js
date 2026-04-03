@@ -79,9 +79,9 @@ const MODELS = {
   'kling-3-pro': {
     name: 'Kling 3.0 Pro',
     emoji: '💎',
-    submitUrl: `${API_BASE}/v1/ai/image-to-video/kling-v3-pro`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v3/${taskId}`,
-    imageField: 'image',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v3-pro`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/video/kling-v3-pro/${taskId}`,
+    imageField: 'start_image_url',
     requiresVideo: false,
     motionControl: false,
     hasAudio: true,
