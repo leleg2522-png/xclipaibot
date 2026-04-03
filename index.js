@@ -682,12 +682,6 @@ async function checkSubscription(userId) {
     );
     if (motionResult.rows.length > 0) {
       const sub = motionResult.rows[0];
-      const createdAt = new Date(sub.created_at || sub.expired_at);
-      const expiredAt = new Date(sub.expired_at);
-      const durationDays = (expiredAt - createdAt) / (1000 * 60 * 60 * 24);
-      if (durationDays < 1) {
-        return { active: false, reason: "Bot ini hanya untuk langganan minimal 1 hari. Silakan berlangganan terlebih dahulu." };
-      }
       return {
         active: true,
         expiredAt: sub.expired_at,
@@ -705,14 +699,6 @@ async function checkSubscription(userId) {
     );
     if (subResult.rows.length > 0) {
       const sub = subResult.rows[0];
-      const durationDays = sub.duration_days || (() => {
-        const createdAt = new Date(sub.created_at || sub.expired_at);
-        const expiredAt = new Date(sub.expired_at);
-        return (expiredAt - createdAt) / (1000 * 60 * 60 * 24);
-      })();
-      if (durationDays < 1) {
-        return { active: false, reason: "Bot ini hanya untuk langganan minimal 1 hari. Silakan berlangganan terlebih dahulu." };
-      }
       return {
         active: true,
         expiredAt: sub.expired_at,
@@ -720,7 +706,7 @@ async function checkSubscription(userId) {
       };
     }
 
-    return { active: false, reason: "Kamu belum punya langganan aktif (minimal 1 hari). Hubungi admin untuk berlangganan." };
+    return { active: false, reason: "Kamu belum punya langganan aktif. Hubungi admin untuk berlangganan." };
   } catch (err) {
     console.error("Subscription check error:", err.message);
     return { active: false, reason: "Gagal mengecek langganan." };
