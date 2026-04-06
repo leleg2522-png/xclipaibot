@@ -1589,10 +1589,22 @@ async function runGenerate(chatId, msg, session, modelConfig) {
     if (jobStatus === "COMPLETED") {
       console.log("[freepik] Full completed result:", JSON.stringify(result));
 
-      const generated = result.generated || result.videos || [];
-      const videoUrls = Array.isArray(generated)
-        ? generated.filter(u => typeof u === "string" && u.startsWith("http"))
-        : [];
+      const videoUrls = [];
+      const candidates = [result.generated, result.videos, result.video, result.output, result.url, result.video_url, result.download_url];
+      for (const val of candidates) {
+        if (typeof val === "string" && val.startsWith("http")) {
+          videoUrls.push(val);
+        } else if (Array.isArray(val)) {
+          for (const item of val) {
+            if (typeof item === "string" && item.startsWith("http")) {
+              videoUrls.push(item);
+            } else if (item && typeof item === "object") {
+              const u = item.url || item.video_url || item.video || item.download_url || item.src;
+              if (typeof u === "string" && u.startsWith("http")) videoUrls.push(u);
+            }
+          }
+        }
+      }
 
       const uniqueUrls = [...new Set(videoUrls)];
       console.log("[freepik] Extracted video URLs:", uniqueUrls);
