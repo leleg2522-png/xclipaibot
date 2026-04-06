@@ -1600,10 +1600,25 @@ async function runGenerate(chatId, msg, session, modelConfig) {
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
           try {
-            await bot.sendMessage(chatId, `✅ Video selesai! Model: ${modelConfig.name}\n\n🔗 Download di sini:\n${videoUrl}`);
-            console.log("[freepik] Sent video link to user:", videoUrl.substring(0, 120));
+            const videoFilename = crypto.randomBytes(16).toString("hex") + ".mp4";
+            const videoLocalPath = path.join(UPLOAD_DIR, videoFilename);
+            console.log("[freepik] Downloading video for streaming:", videoUrl.substring(0, 120));
+            const videoResponse = await axios.get(videoUrl, { responseType: "stream", timeout: 120000 });
+            const videoWriter = fs.createWriteStream(videoLocalPath);
+            videoResponse.data.pipe(videoWriter);
+            await new Promise((resolve, reject) => {
+              videoWriter.on("finish", resolve);
+              videoWriter.on("error", reject);
+            });
+            console.log("[freepik] Video downloaded, sending to user...");
+            await bot.sendVideo(chatId, videoLocalPath, {
+              caption: `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`,
+            });
+            console.log("[freepik] Video sent to user successfully");
+            cleanupFile(videoLocalPath);
           } catch (sendErr) {
-            console.error("sendMessage failed:", sendErr.message);
+            console.error("sendVideo failed:", sendErr.message);
+            await bot.sendMessage(chatId, `✅ Video selesai! Model: ${modelConfig.name}\n\n🔗 Download di sini:\n${videoUrl}`);
           }
         }
       } else {
