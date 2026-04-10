@@ -1661,18 +1661,27 @@ async function runGenerate(chatId, msg, session, modelConfig) {
           try {
             console.log("[freepik] Downloading video:", videoUrl.substring(0, 120));
             const videoResponse = await axios.get(videoUrl, { responseType: "stream", timeout: 120000 });
-            const videoWriter = fs.createWriteStream(videoLocalPath);
-            videoResponse.data.pipe(videoWriter);
-            await new Promise((resolve, reject) => {
-              videoWriter.on("finish", resolve);
-              videoWriter.on("error", reject);
-            });
-            console.log("[freepik] Video downloaded, sending to Telegram...");
-            await bot.sendVideo(chatId, videoLocalPath, {
-              caption: videoCaption,
-              supports_streaming: true,
-            });
-            console.log("[freepik] Video sent successfully");
+            const contentLength = parseInt(videoResponse.headers["content-length"] || "0", 10);
+            const fileSizeMB = contentLength / (1024 * 1024);
+
+            if (contentLength > 0 && fileSizeMB > 49) {
+              console.log(`[freepik] Video too large (${fileSizeMB.toFixed(1)}MB), sending link instead`);
+              videoResponse.data.destroy();
+              await bot.sendMessage(chatId, `${videoCaption}\n\n📁 File terlalu besar (${fileSizeMB.toFixed(0)}MB) untuk dikirim langsung.\n\n🔗 Download di sini:\n${videoUrl}`);
+            } else {
+              const videoWriter = fs.createWriteStream(videoLocalPath);
+              videoResponse.data.pipe(videoWriter);
+              await new Promise((resolve, reject) => {
+                videoWriter.on("finish", resolve);
+                videoWriter.on("error", reject);
+              });
+              console.log(`[freepik] Video downloaded (${fileSizeMB.toFixed(1)}MB), sending to Telegram...`);
+              await bot.sendVideo(chatId, videoLocalPath, {
+                caption: videoCaption,
+                supports_streaming: true,
+              });
+              console.log("[freepik] Video sent successfully");
+            }
           } catch (err) {
             console.error("[freepik] sendVideo failed:", err.message);
             await bot.sendMessage(chatId, `${videoCaption}\n\n🔗 Download di sini:\n${videoUrl}`);
