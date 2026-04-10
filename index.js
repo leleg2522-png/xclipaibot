@@ -476,7 +476,13 @@ function randomJitter(baseMs) {
 }
 
 const UPLOAD_DIR = path.join(__dirname, "uploads");
-if (!fs.existsSync(UPLOAD_DIR)) {
+if (fs.existsSync(UPLOAD_DIR)) {
+  const oldFiles = fs.readdirSync(UPLOAD_DIR);
+  if (oldFiles.length > 0) {
+    oldFiles.forEach(f => { try { fs.unlinkSync(path.join(UPLOAD_DIR, f)); } catch (_) {} });
+    console.log(`[cleanup] Deleted ${oldFiles.length} leftover files from uploads/`);
+  }
+} else {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
