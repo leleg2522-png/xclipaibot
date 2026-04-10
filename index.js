@@ -152,6 +152,26 @@ const MODELS = {
     motionControl: true,
     hasAudio: true,
   },
+  'kling-3-std-mc': {
+    name: 'Kling 3.0 Standard MC',
+    emoji: '🌟',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v3-motion-control-std`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/video/kling-v3-motion-control-std/${taskId}`,
+    imageField: 'image_url',
+    requiresVideo: true,
+    motionControl: true,
+    hasAudio: true,
+  },
+  'kling-3-pro-mc': {
+    name: 'Kling 3.0 Pro MC',
+    emoji: '💎',
+    submitUrl: `${API_BASE}/v1/ai/video/kling-v3-motion-control-pro`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/video/kling-v3-motion-control-pro/${taskId}`,
+    imageField: 'image_url',
+    requiresVideo: true,
+    motionControl: true,
+    hasAudio: true,
+  },
 };
 const KEYS_PER_USER = 2;
 
@@ -176,6 +196,10 @@ function getModelKeyboard() {
       { text: "🌱 Seedance Pro 1080p", callback_data: "model_seedance-pro-1080p" },
     ],
     [{ text: "── 🎥 Motion Control ──", callback_data: "noop" }],
+    [
+      { text: "💎 Kling 3.0 Pro MC", callback_data: "model_kling-3-pro-mc" },
+      { text: "🌟 Kling 3.0 Std MC", callback_data: "model_kling-3-std-mc" },
+    ],
     [
       { text: "⚡ Kling 2.6 Std MC", callback_data: "model_kling-2-6-std-mc" },
       { text: "🔥 Kling 2.6 Pro MC", callback_data: "model_kling-2-6-pro-mc" },
