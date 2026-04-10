@@ -3,6 +3,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { execFile } = require("child_process");
 const { HttpsProxyAgent } = require("https-proxy-agent");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
@@ -1635,27 +1636,62 @@ async function runGenerate(chatId, msg, session, modelConfig) {
 
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
+          const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`;
+          let sent = false;
+
           try {
-            const videoFilename = crypto.randomBytes(16).toString("hex") + ".mp4";
-            const videoLocalPath = path.join(UPLOAD_DIR, videoFilename);
-            console.log("[freepik] Downloading video for streaming:", videoUrl.substring(0, 120));
-            const videoResponse = await axios.get(videoUrl, { responseType: "stream", timeout: 120000 });
-            const videoWriter = fs.createWriteStream(videoLocalPath);
-            videoResponse.data.pipe(videoWriter);
-            await new Promise((resolve, reject) => {
-              videoWriter.on("finish", resolve);
-              videoWriter.on("error", reject);
-            });
-            console.log("[freepik] Video downloaded, sending to user...");
-            await bot.sendVideo(chatId, videoLocalPath, {
-              caption: `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`,
+            console.log("[freepik] Trying sendVideo via URL directly...");
+            await bot.sendVideo(chatId, videoUrl, {
+              caption: videoCaption,
               supports_streaming: true,
             });
-            console.log("[freepik] Video sent to user successfully");
-            cleanupFile(videoLocalPath);
-          } catch (sendErr) {
-            console.error("sendVideo failed:", sendErr.message);
-            await bot.sendMessage(chatId, `✅ Video selesai! Model: ${modelConfig.name}\n\n🔗 Download di sini:\n${videoUrl}`);
+            console.log("[freepik] Video sent via URL successfully");
+            sent = true;
+          } catch (urlErr) {
+            console.error("[freepik] sendVideo via URL failed:", urlErr.message);
+          }
+
+          if (!sent) {
+            try {
+              const videoFilename = crypto.randomBytes(16).toString("hex") + ".mp4";
+              const videoLocalPath = path.join(UPLOAD_DIR, videoFilename);
+              console.log("[freepik] Downloading video locally...");
+              const videoResponse = await axios.get(videoUrl, { responseType: "arraybuffer", timeout: 120000 });
+              fs.writeFileSync(videoLocalPath, Buffer.from(videoResponse.data));
+              const fileSizeMB = fs.statSync(videoLocalPath).size / (1024 * 1024);
+              console.log(`[freepik] Video downloaded: ${fileSizeMB.toFixed(1)}MB`);
+
+              if (fileSizeMB <= 50) {
+                try {
+                  await bot.sendVideo(chatId, videoLocalPath, {
+                    caption: videoCaption,
+                    supports_streaming: true,
+                  });
+                  console.log("[freepik] Video sent via local file successfully");
+                  sent = true;
+                } catch (localErr) {
+                  console.error("[freepik] sendVideo local failed:", localErr.message);
+                  try {
+                    await bot.sendDocument(chatId, videoLocalPath, {
+                      caption: videoCaption,
+                    });
+                    console.log("[freepik] Video sent as document successfully");
+                    sent = true;
+                  } catch (docErr) {
+                    console.error("[freepik] sendDocument failed:", docErr.message);
+                  }
+                }
+              } else {
+                console.log(`[freepik] File too large for Telegram (${fileSizeMB.toFixed(1)}MB > 50MB)`);
+              }
+              cleanupFile(videoLocalPath);
+            } catch (dlErr) {
+              console.error("[freepik] Download failed:", dlErr.message);
+            }
+          }
+
+          if (!sent) {
+            await bot.sendMessage(chatId, `${videoCaption}\n\n🔗 Download di sini:\n${videoUrl}`);
           }
         }
       } else {
