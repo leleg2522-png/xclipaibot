@@ -1625,6 +1625,7 @@ async function runGenerate(chatId, msg, session, modelConfig) {
             console.log("[freepik] Video downloaded, sending to user...");
             await bot.sendVideo(chatId, videoLocalPath, {
               caption: `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`,
+              supports_streaming: true,
             });
             console.log("[freepik] Video sent to user successfully");
             cleanupFile(videoLocalPath);
