@@ -1637,16 +1637,29 @@ async function runGenerate(chatId, msg, session, modelConfig) {
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
           const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`;
+          const videoFilename = crypto.randomBytes(16).toString("hex") + ".mp4";
+          const videoLocalPath = path.join(UPLOAD_DIR, videoFilename);
           try {
-            console.log("[freepik] Sending video via URL directly:", videoUrl.substring(0, 120));
-            await bot.sendVideo(chatId, videoUrl, {
+            console.log("[freepik] Downloading video:", videoUrl.substring(0, 120));
+            const videoResponse = await axios.get(videoUrl, { responseType: "stream", timeout: 120000 });
+            const videoWriter = fs.createWriteStream(videoLocalPath);
+            videoResponse.data.pipe(videoWriter);
+            await new Promise((resolve, reject) => {
+              videoWriter.on("finish", resolve);
+              videoWriter.on("error", reject);
+            });
+            console.log("[freepik] Video downloaded, sending to Telegram...");
+            await bot.sendVideo(chatId, videoLocalPath, {
               caption: videoCaption,
               supports_streaming: true,
             });
-            console.log("[freepik] Video sent via URL successfully");
+            console.log("[freepik] Video sent successfully");
           } catch (err) {
-            console.error("[freepik] sendVideo via URL failed:", err.message);
+            console.error("[freepik] sendVideo failed:", err.message);
             await bot.sendMessage(chatId, `${videoCaption}\n\n🔗 Download di sini:\n${videoUrl}`);
+          } finally {
+            try { fs.unlinkSync(videoLocalPath); } catch (_) {}
+            console.log("[freepik] Temp file deleted:", videoFilename);
           }
         }
       } else {
