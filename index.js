@@ -1620,22 +1620,35 @@ async function runGenerate(chatId, msg, session, modelConfig) {
     if (jobStatus === "COMPLETED") {
       console.log("[freepik] Full completed result:", JSON.stringify(result));
 
-      const videoUrls = [];
-      const candidates = [result.generated, result.videos, result.video, result.output, result.url, result.video_url, result.download_url];
-      for (const val of candidates) {
-        if (typeof val === "string" && val.startsWith("http")) {
-          videoUrls.push(val);
-        } else if (Array.isArray(val)) {
-          for (const item of val) {
-            if (typeof item === "string" && item.startsWith("http")) {
-              videoUrls.push(item);
-            } else if (item && typeof item === "object") {
-              const u = item.url || item.video_url || item.video || item.download_url || item.src;
-              if (typeof u === "string" && u.startsWith("http")) videoUrls.push(u);
+      function extractUrls(obj) {
+        const urls = [];
+        if (!obj) return urls;
+        if (typeof obj === "string") {
+          if (obj.startsWith("http") && (obj.includes(".mp4") || obj.includes("video") || obj.includes("generated") || obj.includes("freepik"))) {
+            urls.push(obj);
+          }
+          return urls;
+        }
+        if (Array.isArray(obj)) {
+          for (const item of obj) urls.push(...extractUrls(item));
+          return urls;
+        }
+        if (typeof obj === "object") {
+          const directKeys = ["url", "video_url", "video", "download_url", "src", "generated"];
+          for (const key of directKeys) {
+            if (obj[key]) urls.push(...extractUrls(obj[key]));
+          }
+          if (urls.length === 0) {
+            for (const key of Object.keys(obj)) {
+              if (!directKeys.includes(key)) urls.push(...extractUrls(obj[key]));
             }
           }
         }
+        return urls;
       }
+
+      const videoUrls = extractUrls(result);
+      console.log("[freepik] All extracted URLs from result:", videoUrls);
 
       const uniqueUrls = [...new Set(videoUrls)];
       console.log("[freepik] Extracted video URLs:", uniqueUrls);
