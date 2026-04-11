@@ -1003,16 +1003,25 @@ bot.onText(/\/addkeys(.*)/, async (msg, match) => {
     bot.sendMessage(chatId, "Hanya admin yang bisa menggunakan perintah ini.");
     return;
   }
-  const input = (match[1] || "").trim();
+  let input = (match[1] || "").trim();
+  if (msg.reply_to_message && msg.reply_to_message.text) {
+    input = input ? input + "\n" + msg.reply_to_message.text.trim() : msg.reply_to_message.text.trim();
+  }
+  const fullText = msg.text || "";
+  const commandEnd = fullText.indexOf(" ");
+  if (commandEnd > 0) {
+    input = fullText.substring(commandEnd).trim();
+  }
   if (!input) {
-    bot.sendMessage(chatId, "Format: /addkeys key1,key2,key3,...");
+    bot.sendMessage(chatId, "Format:\n1. /addkeys key1,key2,key3,...\n2. /addkeys lalu key per baris\n3. Reply pesan berisi key dengan /addkeys");
     return;
   }
-  const keys = input.split(",").map(k => k.trim()).filter(Boolean);
+  const keys = input.split(/[\n,]+/).map(k => k.trim()).filter(Boolean);
   if (keys.length === 0) {
     bot.sendMessage(chatId, "Tidak ada key yang valid.");
     return;
   }
+  bot.sendMessage(chatId, `⏳ Memproses ${keys.length} key...`);
   let added = 0;
   let duplicate = 0;
   for (const key of keys) {
@@ -1027,7 +1036,7 @@ bot.onText(/\/addkeys(.*)/, async (msg, match) => {
       duplicate++;
     }
   }
-  bot.sendMessage(chatId, `Berhasil menambahkan ${added} key baru ke pool.${duplicate > 0 ? `\n${duplicate} key sudah ada/duplikat.` : ""}`);
+  bot.sendMessage(chatId, `✅ Berhasil menambahkan ${added} key baru ke pool.${duplicate > 0 ? `\n⚠️ ${duplicate} key sudah ada/duplikat.` : ""}\n\nTotal diproses: ${keys.length}`);
 });
 
 bot.onText(/\/poolstatus/, async (msg) => {
