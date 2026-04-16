@@ -132,6 +132,16 @@ const MODELS = {
     requiresVideo: false,
     motionControl: false,
   },
+  'veo-3-1': {
+    name: 'Veo 3.1 4K',
+    emoji: '🎬',
+    submitUrl: `${API_BASE}/v1/ai/video/veo-3-1`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/video/veo-3-1/${taskId}`,
+    imageField: 'image_url',
+    requiresVideo: false,
+    motionControl: false,
+    hasAudio: true,
+  },
   // === MOTION CONTROL (foto + video referensi gerakan) ===
   'kling-2-6-std-mc': {
     name: 'Kling 2.6 Standard MC',
@@ -195,6 +205,9 @@ function getModelKeyboard() {
     [
       { text: "🌊 Wan 2.6 1080p", callback_data: "model_wan-2-6-1080p" },
       { text: "🌱 Seedance Pro 1080p", callback_data: "model_seedance-pro-1080p" },
+    ],
+    [
+      { text: "🎬 Veo 3.1 4K", callback_data: "model_veo-3-1" },
     ],
     [{ text: "── 🎥 Motion Control ──", callback_data: "noop" }],
     [
