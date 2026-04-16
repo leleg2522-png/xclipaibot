@@ -141,6 +141,7 @@ const MODELS = {
     requiresVideo: false,
     motionControl: false,
     hasAudio: true,
+    fixedDuration: "8",
   },
   // === MOTION CONTROL (foto + video referensi gerakan) ===
   'kling-2-6-std-mc': {
@@ -980,16 +981,23 @@ bot.on("text", async (msg) => {
   if (session.awaitingPrompt) {
     session.prompt = msg.text.trim();
     session.awaitingPrompt = false;
-    bot.sendMessage(chatId, `✅ Prompt: "${session.prompt}"\n\nPilih durasi video:`, {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "⏱ 5 Detik", callback_data: "dur_5" },
-            { text: "⏱ 10 Detik", callback_data: "dur_10" },
+    const selectedModelConfig = session.selectedModel ? MODELS[session.selectedModel] : null;
+    if (selectedModelConfig && selectedModelConfig.fixedDuration) {
+      session.duration = selectedModelConfig.fixedDuration;
+      const modelText = `${selectedModelConfig.emoji} ${selectedModelConfig.name}`;
+      bot.sendMessage(chatId, `✅ Prompt: "${session.prompt}"\n⏱ Durasi: ${session.duration} detik (fixed)\n\nModel: ${modelText}\n\nSemua siap! Ketik /generate untuk mulai.`);
+    } else {
+      bot.sendMessage(chatId, `✅ Prompt: "${session.prompt}"\n\nPilih durasi video:`, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "⏱ 5 Detik", callback_data: "dur_5" },
+              { text: "⏱ 10 Detik", callback_data: "dur_10" },
+            ],
           ],
-        ],
-      },
-    });
+        },
+      });
+    }
     return;
   }
 });
@@ -1286,7 +1294,7 @@ async function submitVideo(session, modelConfig) {
 
   if (!modelConfig.motionControl) {
     body.prompt = session.prompt || "Generate a creative video from this image";
-    body.duration = session.duration || "5";
+    body.duration = modelConfig.fixedDuration || session.duration || "5";
     body.cfg_scale = 0.5;
   }
 
