@@ -144,6 +144,7 @@ const MODELS = {
     fixedDuration: "8",
     resolution: "4k",
     aspectRatio: "16:9",
+    promptSuffix: "All voiceover, dialogue, and narration must be in Indonesian (Bahasa Indonesia). Use natural Indonesian speech",
   },
   // === MOTION CONTROL (foto + video referensi gerakan) ===
   'kling-2-6-std-mc': {
@@ -1295,7 +1296,11 @@ async function submitVideo(session, modelConfig) {
   }
 
   if (!modelConfig.motionControl) {
-    body.prompt = session.prompt || "Generate a creative video from this image";
+    let userPrompt = session.prompt || "Generate a creative video from this image";
+    if (modelConfig.promptSuffix) {
+      userPrompt = `${userPrompt}. ${modelConfig.promptSuffix}`;
+    }
+    body.prompt = userPrompt;
     body.duration = modelConfig.fixedDuration || session.duration || "5";
     if (!modelConfig.fixedDuration) {
       body.cfg_scale = 0.5;
@@ -1696,22 +1701,24 @@ async function runGenerate(chatId, msg, session, modelConfig) {
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
           const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`;
-          const videoFilename = crypto.randomBytes(16).toString("hex") + ".mp4";
-          const videoLocalPath = path.join(UPLOAD_DIR, videoFilename);
           let videoSent = false;
-          try {
-            console.log("[freepik] Downloading video:", videoUrl.substring(0, 200));
-            const videoResponse = await axios.get(videoUrl, { responseType: "stream", timeout: 180000 });
-            const contentLength = parseInt(videoResponse.headers["content-length"] || "0", 10);
-            const fileSizeMB = contentLength / (1024 * 1024);
-            console.log(`[freepik] Video content-length: ${contentLength} bytes (${fileSizeMB.toFixed(1)}MB)`);
 
-            if (contentLength > 0 && fileSizeMB > 49) {
-              console.log(`[freepik] Video too large (${fileSizeMB.toFixed(1)}MB), sending link instead`);
-              videoResponse.data.destroy();
-              await bot.sendMessage(chatId, `${videoCaption}\n\n📁 File terlalu besar (${fileSizeMB.toFixed(0)}MB) untuk dikirim langsung.\n\n🔗 Download di sini:\n${videoUrl}`);
-              videoSent = true;
-            } else {
+          try {
+            console.log("[freepik] Sending video URL directly to Telegram:", videoUrl.substring(0, 200));
+            await bot.sendVideo(chatId, videoUrl, {
+              caption: videoCaption,
+              supports_streaming: true,
+            });
+            console.log("[freepik] Video sent to Telegram via URL successfully");
+            videoSent = true;
+          } catch (urlErr) {
+            console.error("[freepik] sendVideo via URL failed:", urlErr.message);
+
+            const videoFilename = crypto.randomBytes(16).toString("hex") + ".mp4";
+            const videoLocalPath = path.join(UPLOAD_DIR, videoFilename);
+            try {
+              console.log("[freepik] Fallback: downloading video to disk...");
+              const videoResponse = await axios.get(videoUrl, { responseType: "stream", timeout: 180000 });
               const videoWriter = fs.createWriteStream(videoLocalPath);
               videoResponse.data.pipe(videoWriter);
               await new Promise((resolve, reject) => {
@@ -1720,39 +1727,28 @@ async function runGenerate(chatId, msg, session, modelConfig) {
               });
               const actualSize = fs.statSync(videoLocalPath).size;
               const actualMB = (actualSize / (1024 * 1024)).toFixed(1);
-              console.log(`[freepik] Video downloaded to disk: ${actualMB}MB, sending to Telegram...`);
+              console.log(`[freepik] Video downloaded: ${actualMB}MB, uploading to Telegram...`);
 
-              try {
-                await bot.sendVideo(chatId, videoLocalPath, {
-                  caption: videoCaption,
-                  supports_streaming: true,
-                });
-                console.log("[freepik] Video sent to Telegram successfully");
-                videoSent = true;
-              } catch (sendErr) {
-                console.error("[freepik] sendVideo to Telegram failed:", sendErr.message);
-                console.error("[freepik] sendVideo error details:", JSON.stringify(sendErr.response?.body || sendErr.response?.data || "no details"));
-                try {
-                  await bot.sendMessage(chatId, `${videoCaption}\n\n⚠️ Gagal kirim video langsung (${sendErr.message}).\n\n🔗 Download di sini:\n${videoUrl}`);
-                  videoSent = true;
-                } catch (msgErr) {
-                  console.error("[freepik] Fallback sendMessage also failed:", msgErr.message);
-                }
-              }
+              await bot.sendVideo(chatId, videoLocalPath, {
+                caption: videoCaption,
+                supports_streaming: true,
+              });
+              console.log("[freepik] Video sent to Telegram via file upload successfully");
+              videoSent = true;
+            } catch (fileErr) {
+              console.error("[freepik] Fallback file upload also failed:", fileErr.message);
+            } finally {
+              try { fs.unlinkSync(videoLocalPath); } catch (_) {}
             }
-          } catch (err) {
-            console.error("[freepik] Video download/send error:", err.message);
-            if (!videoSent) {
-              try {
-                await bot.sendMessage(chatId, `${videoCaption}\n\n⚠️ Gagal download video.\n\n🔗 Download di sini:\n${videoUrl}`);
-                videoSent = true;
-              } catch (msgErr) {
-                console.error("[freepik] Final fallback sendMessage failed:", msgErr.message);
-              }
+          }
+
+          if (!videoSent) {
+            try {
+              await bot.sendMessage(chatId, `${videoCaption}\n\n🔗 Download di sini:\n${videoUrl}`);
+              videoSent = true;
+            } catch (msgErr) {
+              console.error("[freepik] sendMessage link fallback failed:", msgErr.message);
             }
-          } finally {
-            try { fs.unlinkSync(videoLocalPath); } catch (_) {}
-            console.log(`[freepik] Cleanup done for ${videoFilename}, videoSent=${videoSent}`);
           }
 
           if (!videoSent) {
@@ -1761,6 +1757,8 @@ async function runGenerate(chatId, msg, session, modelConfig) {
               await bot.sendMessage(chatId, `Video selesai tapi gagal dikirim. Coba generate ulang.\n\nURL: ${videoUrl}`);
             } catch (_) {}
           }
+
+          console.log(`[freepik] Video delivery done, videoSent=${videoSent}`);
         }
       } else {
         console.log("[freepik] No video URLs found. Full response:", JSON.stringify(result));
