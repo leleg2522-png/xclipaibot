@@ -142,6 +142,8 @@ const MODELS = {
     motionControl: false,
     hasAudio: true,
     fixedDuration: "8",
+    resolution: "4k",
+    aspectRatio: "16:9",
   },
   // === MOTION CONTROL (foto + video referensi gerakan) ===
   'kling-2-6-std-mc': {
@@ -1295,7 +1297,15 @@ async function submitVideo(session, modelConfig) {
   if (!modelConfig.motionControl) {
     body.prompt = session.prompt || "Generate a creative video from this image";
     body.duration = modelConfig.fixedDuration || session.duration || "5";
-    body.cfg_scale = 0.5;
+    if (!modelConfig.fixedDuration) {
+      body.cfg_scale = 0.5;
+    }
+    if (modelConfig.resolution) {
+      body.resolution = modelConfig.resolution;
+    }
+    if (modelConfig.aspectRatio) {
+      body.aspect_ratio = modelConfig.aspectRatio;
+    }
   }
 
   if (modelConfig.hasAudio) {
