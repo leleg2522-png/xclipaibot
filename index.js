@@ -135,9 +135,9 @@ const MODELS = {
   'veo-3-1': {
     name: 'Veo 3.1 4K',
     emoji: '🎬',
-    submitUrl: `${API_BASE}/v1/ai/video/veo-3-1`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/video/veo-3-1/${taskId}`,
-    imageField: 'image_url',
+    submitUrl: `${API_BASE}/v1/ai/image-to-video/veo-3-1`,
+    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/veo-3-1/${taskId}`,
+    imageField: 'image',
     requiresVideo: false,
     motionControl: false,
     hasAudio: true,
