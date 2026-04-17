@@ -1700,63 +1700,13 @@ async function runGenerate(chatId, msg, session, modelConfig) {
 
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
-          const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`;
-          const videoFilename = crypto.randomBytes(16).toString("hex") + ".mp4";
-          const videoLocalPath = path.join(UPLOAD_DIR, videoFilename);
-          let videoSent = false;
-
+          const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}\n\n🔗 Download/tonton di sini:\n${videoUrl}`;
           try {
-            console.log("[freepik] Downloading video via proxy:", videoUrl.substring(0, 200));
-
-            const downloadConfig = { responseType: "stream", timeout: 300000 };
-            if (VPS_PROXIES.length > 0) {
-              const proxy = VPS_PROXIES[Math.floor(Math.random() * VPS_PROXIES.length)];
-              const proxyUrl = buildProxyUrl(proxy);
-              downloadConfig.httpsAgent = new HttpsProxyAgent(proxyUrl, { rejectUnauthorized: false });
-              downloadConfig.proxy = false;
-              console.log(`[freepik] Using proxy ${proxy.host}:${proxy.port} for video download`);
-            }
-
-            const videoResponse = await axios.get(videoUrl, downloadConfig);
-            const videoWriter = fs.createWriteStream(videoLocalPath);
-            videoResponse.data.pipe(videoWriter);
-            await new Promise((resolve, reject) => {
-              videoWriter.on("finish", resolve);
-              videoWriter.on("error", reject);
-            });
-            const actualSize = fs.statSync(videoLocalPath).size;
-            const actualMB = (actualSize / (1024 * 1024)).toFixed(1);
-            console.log(`[freepik] Video downloaded: ${actualMB}MB, uploading to Telegram...`);
-
-            await bot.sendVideo(chatId, videoLocalPath, {
-              caption: videoCaption,
-              supports_streaming: true,
-            });
-            console.log("[freepik] Video sent to Telegram successfully");
-            videoSent = true;
-          } catch (err) {
-            console.error("[freepik] Video download/send error:", err.message);
-          } finally {
-            try { fs.unlinkSync(videoLocalPath); } catch (_) {}
+            await bot.sendMessage(chatId, videoCaption, { disable_web_page_preview: false });
+            console.log("[freepik] Video link sent to user");
+          } catch (msgErr) {
+            console.error("[freepik] sendMessage link failed:", msgErr.message);
           }
-
-          if (!videoSent) {
-            try {
-              await bot.sendMessage(chatId, `${videoCaption}\n\n⚠️ Gagal kirim video langsung.\n\n🔗 Download di sini:\n${videoUrl}`);
-              videoSent = true;
-            } catch (msgErr) {
-              console.error("[freepik] sendMessage link fallback failed:", msgErr.message);
-            }
-          }
-
-          if (!videoSent) {
-            console.error("[freepik] CRITICAL: Could not send video or link to user!");
-            try {
-              await bot.sendMessage(chatId, `Video selesai tapi gagal dikirim. Coba generate ulang.\n\nURL: ${videoUrl}`);
-            } catch (_) {}
-          }
-
-          console.log(`[freepik] Video delivery done, videoSent=${videoSent}`);
         }
       } else {
         console.log("[freepik] No video URLs found. Full response:", JSON.stringify(result));
