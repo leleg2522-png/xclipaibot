@@ -228,23 +228,21 @@ function getModelKeyboard() {
 function initProxy() {
   const bulkVar = process.env.VPS_PROXIES || process.env.PROXY_LIST;
   if (bulkVar) {
-    bulkVar.split(',').map(e => e.trim()).filter(Boolean).forEach(entry => {
+    bulkVar.split(/[,\n]/).map(e => e.trim()).filter(Boolean).forEach(entry => {
       const parts = entry.split(':');
       if (parts.length >= 4) {
-        const host = parts[0];
-        const port = parseInt(parts[1]);
-        const username = parts[2];
-        const password = parts[3];
-        VPS_PROXIES.push({ host, port, username, password });
-        for (let p = port + 1; p <= port + 9; p++) {
-          VPS_PROXIES.push({ host, port: p, username, password });
-        }
+        VPS_PROXIES.push({
+          host: parts[0],
+          port: parseInt(parts[1]),
+          username: parts[2],
+          password: parts[3],
+        });
       } else if (parts.length >= 2) {
         VPS_PROXIES.push({
           host: parts[0],
           port: parseInt(parts[1]),
           username: parts[2] || null,
-          password: parts[3] || null
+          password: parts[3] || null,
         });
       }
     });
