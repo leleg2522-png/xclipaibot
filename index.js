@@ -1335,8 +1335,17 @@ async function submitVideo(session, modelConfig) {
   userKeyRotation.set(session.userId, userRoundRobin + 1);
 
   let lastError = null;
+  const triedKeys = new Set();
+  const queue = [...rotatedKeys];
+  const MAX_RETRIES = 10;
+  let attempts = 0;
 
-  for (const apiKey of rotatedKeys) {
+  while (queue.length > 0 && attempts < MAX_RETRIES) {
+    const apiKey = queue.shift();
+    if (triedKeys.has(apiKey)) continue;
+    triedKeys.add(apiKey);
+    attempts++;
+
     const now = Date.now();
     const failure = keyFailures[apiKey];
     if (failure && failure.until > now) {
@@ -1344,7 +1353,7 @@ async function submitVideo(session, modelConfig) {
       continue;
     }
 
-    console.log(`[freepik] Using key ...${apiKey.slice(-6)}`);
+    console.log(`[freepik] Attempt ${attempts}/${MAX_RETRIES} using key ...${apiKey.slice(-6)}`);
 
     try {
       const response = await makeFreepikRequest('POST', url, apiKey, body);
@@ -1359,21 +1368,18 @@ async function submitVideo(session, modelConfig) {
 
       console.log(`[freepik] Submit error: ${status} - ${msg}`);
 
-      if (status === 429) {
-        console.log(`[freepik] Key ...${apiKey.slice(-6)} rate limited/quota habis, replacing...`);
-        await replaceDeadKey(session.userId, apiKey);
-        continue;
-      }
-
-      if (status === 401) {
-        console.log(`[freepik] Key ...${apiKey.slice(-6)} invalid, replacing...`);
-        await replaceDeadKey(session.userId, apiKey);
-        continue;
-      }
-
-      if (status === 402 || status === 403) {
-        console.log(`[freepik] Key ...${apiKey.slice(-6)} no balance/forbidden, replacing...`);
-        await replaceDeadKey(session.userId, apiKey);
+      if (status === 429 || status === 401 || status === 402 || status === 403) {
+        const reason = status === 429 ? 'rate limited/quota habis'
+                     : status === 401 ? 'invalid'
+                     : 'no balance/forbidden';
+        console.log(`[freepik] Key ...${apiKey.slice(-6)} ${reason}, replacing...`);
+        const newKey = await replaceDeadKey(session.userId, apiKey);
+        if (newKey && !triedKeys.has(newKey)) {
+          console.log(`[freepik] Got replacement key ...${newKey.slice(-6)}, will retry`);
+          queue.push(newKey);
+        } else if (!newKey) {
+          console.log(`[freepik] No replacement key available in pool`);
+        }
         continue;
       }
 
@@ -1381,6 +1387,9 @@ async function submitVideo(session, modelConfig) {
     }
   }
 
+  if (attempts >= MAX_RETRIES) {
+    console.log(`[freepik] Hit max retries (${MAX_RETRIES})`);
+  }
   if (lastError) throw lastError;
   throw new Error("Semua API key tidak tersedia. Coba lagi nanti.");
 }
