@@ -431,14 +431,14 @@ async function replaceDeadKey(userId, deadKey) {
   try {
     await client.query("BEGIN");
     await client.query(
-      "UPDATE api_key_pool SET status = 'dead', dead_at = NOW() WHERE api_key = $1",
+      "DELETE FROM user_api_keys WHERE api_key = $1",
       [deadKey]
     );
     await client.query(
-      "DELETE FROM user_api_keys WHERE user_id = $1 AND api_key = $2",
-      [userId, deadKey]
+      "DELETE FROM api_key_pool WHERE api_key = $1",
+      [deadKey]
     );
-    console.log(`[pool] Key ...${deadKey.slice(-6)} marked dead for user ${userId}`);
+    console.log(`[pool] Key ...${deadKey.slice(-6)} permanently deleted (dead) for user ${userId}`);
 
     const available = await client.query(
       "SELECT api_key FROM api_key_pool WHERE status = 'available' ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED"
@@ -1071,7 +1071,6 @@ bot.onText(/\/poolstatus/, async (msg) => {
     const total = await db.query("SELECT COUNT(*) as count FROM api_key_pool");
     const available = await db.query("SELECT COUNT(*) as count FROM api_key_pool WHERE status = 'available'");
     const assigned = await db.query("SELECT COUNT(*) as count FROM api_key_pool WHERE status = 'assigned'");
-    const dead = await db.query("SELECT COUNT(*) as count FROM api_key_pool WHERE status = 'dead'");
     const users = await db.query("SELECT COUNT(DISTINCT user_id) as count FROM user_api_keys");
 
     bot.sendMessage(chatId,
@@ -1079,10 +1078,10 @@ bot.onText(/\/poolstatus/, async (msg) => {
       `Total key: ${total.rows[0].count}\n` +
       `Tersedia: ${available.rows[0].count}\n` +
       `Terpakai: ${assigned.rows[0].count}\n` +
-      `Mati: ${dead.rows[0].count}\n` +
       `User dengan key: ${users.rows[0].count}\n` +
       `Key per user: ${KEYS_PER_USER}\n` +
-      `Kapasitas user: ${Math.floor(available.rows[0].count / KEYS_PER_USER)} user lagi`
+      `Kapasitas user: ${Math.floor(available.rows[0].count / KEYS_PER_USER)} user lagi\n\n` +
+      `ℹ️ Key mati langsung dihapus otomatis`
     );
   } catch (err) {
     console.error("Pool status error:", err.message);
