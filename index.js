@@ -565,6 +565,40 @@ const userCooldowns = new Map();
 const userDailyUsage = new Map();
 const userKeyRotation = new Map();
 
+// Global submission queue — staggers Freepik API calls across users
+// to avoid burst patterns that trigger abuse/IP bans
+const SUBMIT_JITTER_MIN_MS = 8000;
+const SUBMIT_JITTER_MAX_MS = 20000;
+let submitQueueBusy = false;
+const submitQueue = [];
+
+function scheduleSubmit(fn) {
+  return new Promise((resolve, reject) => {
+    submitQueue.push({ fn, resolve, reject });
+    drainSubmitQueue();
+  });
+}
+
+async function drainSubmitQueue() {
+  if (submitQueueBusy || submitQueue.length === 0) return;
+  submitQueueBusy = true;
+  while (submitQueue.length > 0) {
+    const { fn, resolve, reject } = submitQueue.shift();
+    try {
+      const result = await fn();
+      resolve(result);
+    } catch (err) {
+      reject(err);
+    }
+    if (submitQueue.length > 0) {
+      const jitter = SUBMIT_JITTER_MIN_MS + Math.floor(Math.random() * (SUBMIT_JITTER_MAX_MS - SUBMIT_JITTER_MIN_MS));
+      console.log(`[queue] Jitter ${jitter}ms sebelum submit berikutnya (${submitQueue.length} antrian)`);
+      await new Promise(r => setTimeout(r, jitter));
+    }
+  }
+  submitQueueBusy = false;
+}
+
 function getTodayKey() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -1355,7 +1389,7 @@ async function submitVideo(session, modelConfig) {
     console.log(`[freepik] Attempt ${attempts}/${MAX_RETRIES} using key ...${apiKey.slice(-6)}`);
 
     try {
-      const response = await makeFreepikRequest('POST', url, apiKey, body);
+      const response = await scheduleSubmit(() => makeFreepikRequest('POST', url, apiKey, body));
       markKeyOk(apiKey);
       lockKey(apiKey);
       session.apiKey = apiKey;
