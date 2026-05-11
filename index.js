@@ -560,7 +560,7 @@ function getPublicFileUrl(filename) {
 }
 
 const COOLDOWN_MS = 5 * 60 * 1000;
-const DAILY_LIMIT = 30;
+const DAILY_LIMIT = 15;
 const userCooldowns = new Map();
 const userDailyUsage = new Map();
 const userKeyRotation = new Map();
