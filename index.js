@@ -10,7 +10,7 @@ const bcrypt = require("bcryptjs");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.REPLIT_DEV_DOMAIN;
-const RAILWAY_DB_URL = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
+const RAILWAY_DB_URL = process.env.DATABASE_URL || process.env.RAILWAY_DATABASE_URL;
 
 let db = null;
 if (RAILWAY_DB_URL) {
@@ -503,7 +503,7 @@ if (fs.existsSync(UPLOAD_DIR)) {
 
 const express = require("express");
 const app = express();
-const FILE_SERVER_PORT = process.env.PORT || 3000;
+const FILE_SERVER_PORT = process.env.PORT || 5000;
 
 app.use(express.json());
 app.use("/files", express.static(UPLOAD_DIR));
