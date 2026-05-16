@@ -559,8 +559,8 @@ function getPublicFileUrl(filename) {
   return `http://localhost:${FILE_SERVER_PORT}/files/${filename}`;
 }
 
-const COOLDOWN_MS = 5 * 60 * 1000;
-const DAILY_LIMIT = 15;
+const COOLDOWN_MS = 2 * 60 * 1000;
+const DAILY_LIMIT = 20;
 const userCooldowns = new Map();
 const userDailyUsage = new Map();
 const userKeyRotation = new Map();
