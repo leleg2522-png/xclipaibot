@@ -188,7 +188,7 @@ const MODELS = {
     hasAudio: true,
   },
 };
-const KEYS_PER_USER = 2;
+const KEYS_PER_USER = 1;
 
 let VPS_PROXIES = [];
 
