@@ -10,7 +10,7 @@ const bcrypt = require("bcryptjs");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.REPLIT_DEV_DOMAIN;
-const RAILWAY_DB_URL = process.env.DATABASE_URL || process.env.RAILWAY_DATABASE_URL;
+const RAILWAY_DB_URL = process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
 
 let db = null;
 if (RAILWAY_DB_URL) {
