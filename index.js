@@ -1405,12 +1405,14 @@ async function submitVideo(session, modelConfig) {
         const msgLower = (msg || '').toLowerCase();
         const isDailyLimit = msgLower.includes('daily limit') ||
                              msgLower.includes('hit your daily') ||
-                             msgLower.includes('more capacity') ||
-                             msgLower.includes('magnific.com');
+                             msgLower.includes('more capacity');
         const isFreeTrial = msgLower.includes('free trial') ||
                             msgLower.includes('upgrade to a paid') ||
                             msgLower.includes('freepik.com/developers/dashboard/billing');
-        if (isDailyLimit && !isFreeTrial) {
+        const isInvalidKey = msgLower.includes('api key is invalid') ||
+                             msgLower.includes('unauthorized') ||
+                             msgLower.includes('verify your api key');
+        if (isDailyLimit && !isFreeTrial && !isInvalidKey) {
           console.log(`[freepik] Key ...${apiKey.slice(-6)} hit daily limit for this model — tidak dihapus`);
           throw new Error('DAILY_LIMIT_MODEL');
         }
