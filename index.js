@@ -1407,11 +1407,15 @@ async function submitVideo(session, modelConfig) {
                              msgLower.includes('hit your daily') ||
                              msgLower.includes('more capacity') ||
                              msgLower.includes('magnific.com');
-        if (isDailyLimit) {
+        const isFreeTrial = msgLower.includes('free trial') ||
+                            msgLower.includes('upgrade to a paid') ||
+                            msgLower.includes('freepik.com/developers/dashboard/billing');
+        if (isDailyLimit && !isFreeTrial) {
           console.log(`[freepik] Key ...${apiKey.slice(-6)} hit daily limit for this model — tidak dihapus`);
           throw new Error('DAILY_LIMIT_MODEL');
         }
-        const reason = status === 429 ? 'rate limited/quota habis'
+        const reason = isFreeTrial ? 'free trial habis'
+                     : status === 429 ? 'rate limited/quota habis'
                      : status === 401 ? 'invalid'
                      : 'no balance/forbidden';
         console.log(`[freepik] Key ...${apiKey.slice(-6)} ${reason}, replacing...`);
