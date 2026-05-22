@@ -16,7 +16,7 @@ let db = null;
 if (RAILWAY_DB_URL) {
   db = new Pool({
     connectionString: RAILWAY_DB_URL,
-    ssl: RAILWAY_DB_URL.includes('railway') || RAILWAY_DB_URL.includes('neon') ? { rejectUnauthorized: false } : false,
+    ssl: RAILWAY_DB_URL.includes('railway') || RAILWAY_DB_URL.includes('neon') || RAILWAY_DB_URL.includes('replit') ? { rejectUnauthorized: false } : false,
     max: 5,
   });
   db.query("SELECT 1")
