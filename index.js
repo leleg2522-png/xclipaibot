@@ -1402,7 +1402,11 @@ async function submitVideo(session, modelConfig) {
       console.log(`[freepik] Submit error: ${status} - ${msg}`);
 
       if (status === 429 || status === 401 || status === 402 || status === 403) {
-        const isDailyLimit = (msg || '').toLowerCase().includes('daily limit');
+        const msgLower = (msg || '').toLowerCase();
+        const isDailyLimit = msgLower.includes('daily limit') ||
+                             msgLower.includes('hit your daily') ||
+                             msgLower.includes('more capacity') ||
+                             msgLower.includes('magnific.com');
         if (isDailyLimit) {
           console.log(`[freepik] Key ...${apiKey.slice(-6)} hit daily limit for this model — tidak dihapus`);
           throw new Error('DAILY_LIMIT_MODEL');
