@@ -1402,6 +1402,11 @@ async function submitVideo(session, modelConfig) {
       console.log(`[freepik] Submit error: ${status} - ${msg}`);
 
       if (status === 429 || status === 401 || status === 402 || status === 403) {
+        const isDailyLimit = (msg || '').toLowerCase().includes('daily limit');
+        if (isDailyLimit) {
+          console.log(`[freepik] Key ...${apiKey.slice(-6)} hit daily limit for this model — tidak dihapus`);
+          throw new Error('DAILY_LIMIT_MODEL');
+        }
         const reason = status === 429 ? 'rate limited/quota habis'
                      : status === 401 ? 'invalid'
                      : 'no balance/forbidden';
@@ -1763,8 +1768,15 @@ async function runGenerate(chatId, msg, session, modelConfig) {
     const errStatus = err.response?.status || 'N/A';
     const errBody = err.response?.data ? JSON.stringify(err.response.data).substring(0, 500) : 'N/A';
     console.error(`[freepik] Generate error: status=${errStatus} message=${err.message} body=${errBody}`);
-    const errorMsg = err.response?.data?.message || err.response?.data?.detail || err.response?.data?.error || err.message || 'Unknown error';
-    bot.sendMessage(chatId, `Error: ${errorMsg}`);
+    if (err.message === 'DAILY_LIMIT_MODEL') {
+      bot.sendMessage(chatId,
+        `⚠️ Model ini sudah mencapai batas harian (daily limit).\n\nSilakan ganti model lain dengan mengetik /generate dan pilih model yang berbeda.`,
+        { reply_markup: { inline_keyboard: getModelKeyboard() } }
+      );
+    } else {
+      const errorMsg = err.response?.data?.message || err.response?.data?.detail || err.response?.data?.error || err.message || 'Unknown error';
+      bot.sendMessage(chatId, `Error: ${errorMsg}`);
+    }
     if (session.apiKey) unlockKey(session.apiKey);
     session.isGenerating = false;
   }
