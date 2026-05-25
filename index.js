@@ -1192,6 +1192,58 @@ bot.onText(/\/returnkeys(?:\s+(\d+))?/, async (msg, match) => {
   }
 });
 
+bot.onText(/\/resetlimit(?:\s+(\d+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(msg)) {
+    bot.sendMessage(chatId, "Hanya admin yang bisa menggunakan perintah ini.");
+    return;
+  }
+
+  const targetUserId = match[1] ? match[1].trim() : null;
+
+  if (targetUserId) {
+    userDailyUsage.delete(targetUserId);
+    userDailyUsage.delete(Number(targetUserId));
+    bot.sendMessage(chatId, `✅ Limit harian user ${targetUserId} sudah direset ke 0/${DAILY_LIMIT}.`);
+    return;
+  }
+
+  const usageList = [];
+  for (const [uid, entry] of userDailyUsage.entries()) {
+    const today = getTodayKey();
+    if (entry.date === today && entry.count > 0) {
+      usageList.push({ uid, count: entry.count });
+    }
+  }
+  usageList.sort((a, b) => b.count - a.count);
+
+  let text = `📊 *Daily Limit Status*\n\n`;
+  text += `Limit per user: ${DAILY_LIMIT}x/hari\n`;
+  text += `User aktif hari ini: ${usageList.length}\n\n`;
+
+  if (usageList.length > 0) {
+    text += `*Usage hari ini:*\n`;
+    for (const { uid, count } of usageList.slice(0, 20)) {
+      const bar = count >= DAILY_LIMIT ? "🔴" : count >= DAILY_LIMIT * 0.7 ? "🟡" : "🟢";
+      text += `${bar} User ${uid}: ${count}/${DAILY_LIMIT}\n`;
+    }
+    if (usageList.length > 20) text += `...dan ${usageList.length - 20} user lainnya\n`;
+  } else {
+    text += `Tidak ada user yang generate hari ini.\n`;
+  }
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "🔄 Reset Semua User", callback_data: "admin_resetall" }],
+      ...usageList.slice(0, 10).map(({ uid, count }) => ([
+        { text: `Reset User ${uid} (${count}/${DAILY_LIMIT})`, callback_data: `admin_resetuser_${uid}` }
+      ])),
+    ]
+  };
+
+  bot.sendMessage(chatId, text, { parse_mode: "Markdown", reply_markup: keyboard });
+});
+
 bot.on("photo", async (msg) => {
   const chatId = msg.chat.id;
   const session = getSession(msg);
@@ -1606,6 +1658,38 @@ bot.on("callback_query", async (query) => {
 
   if (data === "noop") {
     bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data === "admin_resetall") {
+    const adminMsg = { from: query.from, chat: query.message.chat };
+    if (!isAdmin(adminMsg)) {
+      bot.answerCallbackQuery(query.id, { text: "Hanya admin." });
+      return;
+    }
+    const totalBefore = userDailyUsage.size;
+    userDailyUsage.clear();
+    bot.answerCallbackQuery(query.id, { text: `✅ Semua limit direset!` });
+    bot.editMessageText(
+      `✅ *Reset berhasil!*\n\nLimit harian semua user sudah direset ke 0/${DAILY_LIMIT}.\nTotal user yang direset: ${totalBefore}`,
+      { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
+    ).catch(() => {
+      bot.sendMessage(chatId, `✅ Limit harian semua user direset. Total: ${totalBefore} user.`);
+    });
+    return;
+  }
+
+  if (data.startsWith("admin_resetuser_")) {
+    const adminMsg = { from: query.from, chat: query.message.chat };
+    if (!isAdmin(adminMsg)) {
+      bot.answerCallbackQuery(query.id, { text: "Hanya admin." });
+      return;
+    }
+    const uid = data.replace("admin_resetuser_", "");
+    userDailyUsage.delete(uid);
+    userDailyUsage.delete(Number(uid));
+    bot.answerCallbackQuery(query.id, { text: `✅ Limit user ${uid} direset!` });
+    bot.sendMessage(chatId, `✅ Limit harian user ${uid} direset ke 0/${DAILY_LIMIT}.`);
     return;
   }
 
