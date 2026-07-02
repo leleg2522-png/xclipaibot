@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "UTbHKkxUGMIyFupHiGl0E"
+uri = "file://exports/hasil_test_flora.mp4"
+type = "video"
+title = "Hasil Test Generate — Kling 2.6 Pro Motion Control"
