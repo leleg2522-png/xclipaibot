@@ -1,0 +1,1 @@
+- [Flora media upload](flora-media-upload.md) — Flora fetches media only from allowlisted hosts; upload via POST /api/v1/assets first or generate charges then fails.

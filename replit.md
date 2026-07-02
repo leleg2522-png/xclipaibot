@@ -14,7 +14,9 @@ This project runs directly on Replit. The "Start application" workflow runs `npm
 - Base URL: `https://app.flora.ai`, auth via `Authorization: Bearer <FLORA_API_KEY>`.
 - Model discovery: `GET /api/v1/models` → the "Kling 2.6 Pro Motion Control" endpoint id is `iv2v-kling-2.6-motion` (discovered at runtime, cached).
 - Context discovery per key: `GET /api/v1/workspaces` → `workspace_id`, `GET /api/v1/projects?workspace_id=...` → `project_id` (created if missing, cached per key).
-- Submit: `POST /api/v1/generate` with body `{ type:"video", model, workspace_id, project_id, prompt, params:{ image_url, video_url, character_orientation } }`. **Media inputs must live inside the `params` map** — not in `inputs`/`parameters`.
+- **Media host allowlist:** Flora only fetches input media from allowlisted hosts (`media.flora.ai`, `storage.googleapis.com`, S3). Our own file server (Railway/Replit domain) is NOT accepted — passing such URLs makes `/generate` accept + charge, then fail instantly with `GENERATION_GENERIC_ERROR`.
+- **Upload flow (required before generate):** `POST /api/v1/assets` with `{ source:"signed-url", workspace_id, filename, content_type }` → returns `url` (final `media.flora.ai` URL) + `upload` (an ImageKit signed multipart form). POST the file bytes to `upload.url` using `upload.form_fields` + the `upload.file_field` (default `file`). The returned `media.flora.ai` URL is public and reusable across keys.
+- Submit: `POST /api/v1/generate` with body `{ type:"video", model, workspace_id, project_id, prompt, params:{ image_url, video_url, character_orientation } }` — where `image_url`/`video_url` are the uploaded `media.flora.ai` URLs. `params.character_orientation` is `image`|`video`.
 - Poll: `GET` the returned `poll_url` until `status` is `completed`/`failed`; on completion, video URL is at `outputs[].url`.
 
 ## Multi-key pool system

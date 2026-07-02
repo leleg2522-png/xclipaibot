@@ -7,6 +7,7 @@ const { execFile } = require("child_process");
 const { HttpsProxyAgent } = require("https-proxy-agent");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
+const FormData = require("form-data");
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.REPLIT_DEV_DOMAIN;
@@ -1237,38 +1238,78 @@ bot.on("document", async (msg) => {
   }
 });
 
+function contentTypeFor(p) {
+  const ext = path.extname(p || '').toLowerCase();
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.mp4') return 'video/mp4';
+  if (ext === '.mov') return 'video/quicktime';
+  if (ext === '.webm') return 'video/webm';
+  return 'application/octet-stream';
+}
+
+// Flora hanya menerima media dari host allowlist (media.flora.ai / GCS / S3),
+// jadi file harus di-upload dulu ke asset Flora. Alurnya: buat asset (signed-url)
+// -> upload byte ke storage yang ditunjuk -> pakai URL media.flora.ai hasilnya.
+async function uploadFloraAsset(apiKey, workspaceId, localPath, contentType) {
+  const filename = path.basename(localPath);
+  const createResp = await makeFloraRequest('POST', `${FLORA_BASE}/api/v1/assets`, apiKey, {
+    source: 'signed-url',
+    workspace_id: workspaceId,
+    filename,
+    content_type: contentType,
+  });
+  const data = createResp.data || {};
+  const up = data.upload;
+  const mediaUrl = data.url;
+  if (!up || !up.url || !mediaUrl) {
+    throw new Error('Flora tidak mengembalikan target upload asset.');
+  }
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(up.form_fields || {})) fd.append(k, String(v));
+  fd.append(up.file_field || 'file', fs.createReadStream(localPath), { filename });
+  try {
+    await axios.post(up.url, fd, {
+      headers: fd.getHeaders(),
+      timeout: 120000,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    });
+  } catch (e) {
+    // Kegagalan di sini adalah dari storage upload (ImageKit), BUKAN dari Flora
+    // API key. Bungkus ulang tanpa `response` HTTP supaya submit loop tidak salah
+    // menganggap key mati (401/402/403) lalu menghapusnya dari pool.
+    const wrapped = new Error(`Gagal upload media ke Flora storage: ${e.response?.status || e.code || e.message}`);
+    wrapped.isUploadError = true;
+    throw wrapped;
+  }
+  return mediaUrl;
+}
+
 async function submitVideo(session, modelConfig) {
   const url = `${FLORA_BASE}/api/v1/generate`;
 
-  const imageUrl = session.imageFile.publicUrl;
-
   console.log(`[flora] Submit model=${session.selectedModel}`);
-  console.log(`[flora] image_url: ${imageUrl}`);
 
-  // Flora "generate" carries model inputs inside the `params` map (see
-  // developer.flora.ai generations/create). Kling MC V3 PRO needs
-  // image_url (character) + video_url (motion reference) + character_orientation.
-  const params = {
-    image_url: imageUrl,
-    character_orientation: session.orientation === 'image' ? 'image' : 'video',
-  };
-
-  if (session.videoFile) {
-    params.video_url = session.videoFile.publicUrl;
-    console.log(`[flora] video_url: ${session.videoFile.publicUrl}`);
-  }
-
+  const orientation = session.orientation === 'image' ? 'image' : 'video';
   // Flora requires a non-empty top-level prompt for this model.
   const prompt = session.prompt || 'Animate the character in the image to follow the motion in the reference video.';
 
-  const body = {
-    type: 'video',
-    prompt,
-    params,
-  };
+  const imageLocalPath = session.imageFile?.localPath;
+  const videoLocalPath = session.videoFile?.localPath;
+  if (!imageLocalPath || !fs.existsSync(imageLocalPath)) {
+    throw new Error('File foto tidak ditemukan di server. Kirim ulang fotonya lalu /generate.');
+  }
+  if (modelConfig.requiresVideo && (!videoLocalPath || !fs.existsSync(videoLocalPath))) {
+    throw new Error('File video tidak ditemukan di server. Kirim ulang videonya lalu /generate.');
+  }
+
+  // Di-upload sekali; URL media.flora.ai bersifat publik sehingga bisa dipakai
+  // ulang lintas percobaan key kalau ada key yang mati saat submit.
+  let floraImageUrl = null;
+  let floraVideoUrl = null;
   console.log(`[flora] prompt: ${prompt}`);
-  console.log(`[flora] params:`, JSON.stringify(params));
-  console.log(`[flora] Request body:`, JSON.stringify(body));
 
   const poolKeys = await getPoolKeys();
   if (poolKeys.length === 0) {
@@ -1315,6 +1356,22 @@ async function submitVideo(session, modelConfig) {
     try {
       const modelId = await getFloraModelId(apiKey);
       const ctx = await getFloraContext(apiKey);
+
+      // Upload media ke asset Flora (host allowlist). Sekali saja, lalu reuse.
+      if (!floraImageUrl) {
+        floraImageUrl = await uploadFloraAsset(apiKey, ctx.workspaceId, imageLocalPath, contentTypeFor(imageLocalPath));
+        console.log(`[flora] image asset: ${floraImageUrl}`);
+      }
+      if (modelConfig.requiresVideo && !floraVideoUrl) {
+        floraVideoUrl = await uploadFloraAsset(apiKey, ctx.workspaceId, videoLocalPath, contentTypeFor(videoLocalPath));
+        console.log(`[flora] video asset: ${floraVideoUrl}`);
+      }
+
+      const params = { image_url: floraImageUrl, character_orientation: orientation };
+      if (floraVideoUrl) params.video_url = floraVideoUrl;
+      const body = { type: 'video', prompt, params };
+      console.log(`[flora] params:`, JSON.stringify(params));
+
       const fullBody = { model: modelId, workspace_id: ctx.workspaceId, project_id: ctx.projectId, ...body };
       const response = await scheduleSubmit(() => makeFloraRequest('POST', url, apiKey, fullBody));
       markKeyOk(apiKey);
