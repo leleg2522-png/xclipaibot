@@ -263,7 +263,7 @@ async function getFloraContext(apiKey) {
   const wsResp = await makeFloraRequest('GET', `${FLORA_BASE}/api/v1/workspaces`, apiKey);
   const workspaces = wsResp.data?.workspaces || wsResp.data?.data || (Array.isArray(wsResp.data) ? wsResp.data : []);
   const workspaceId = workspaces[0]?.workspace_id || workspaces[0]?.id;
-  if (!workspaceId) throw new Error('Tidak ada workspace pada akun Flora untuk API key ini.');
+  if (!workspaceId) throw new Error('Tidak ada workspace pada akun untuk API key ini.');
 
   const prjResp = await makeFloraRequest('GET', `${FLORA_BASE}/api/v1/projects?workspace_id=${encodeURIComponent(workspaceId)}`, apiKey);
   const projects = prjResp.data?.projects || prjResp.data?.data || (Array.isArray(prjResp.data) ? prjResp.data : []);
@@ -276,7 +276,7 @@ async function getFloraContext(apiKey) {
     });
     projectId = created.data?.project_id || created.data?.id || created.data?.project?.project_id;
   }
-  if (!projectId) throw new Error('Tidak bisa menemukan/membuat project Flora untuk API key ini.');
+  if (!projectId) throw new Error('Tidak bisa menemukan/membuat project untuk API key ini.');
 
   const ctx = { workspaceId, projectId };
   floraContextCache.set(apiKey, ctx);
@@ -432,7 +432,7 @@ app.use(express.json());
 app.use("/files", express.static(UPLOAD_DIR));
 
 app.get("/", (req, res) => {
-  res.json({ status: "ok", bot: "Kling 2.6 Pro Motion Control (Flora AI)" });
+  res.json({ status: "ok", bot: "Kling 2.6 Pro Motion Control" });
 });
 
 app.listen(FILE_SERVER_PORT, "0.0.0.0", () => {
@@ -721,7 +721,7 @@ bot.onText(/\/start/, (msg) => {
     msg.chat.id,
 `🎬 AI Video Generator Bot
 
-Bot ini menghasilkan video menggunakan model 🔥 Kling 2.6 Pro Motion Control via Flora AI.
+Bot ini menghasilkan video menggunakan model 🔥 Kling 2.6 Pro Motion Control.
 
 🎥 Motion Control (foto karakter + video referensi gerakan):
 🔥 Kling 2.6 Pro Motion Control
@@ -1594,7 +1594,7 @@ async function runGenerate(chatId, msg, session, modelConfig) {
     setCooldown(session.userId);
     incrementDailyUsage(session.userId);
     const remaining = getDailyRemaining(session.userId);
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${runId || pollUrl}\nCooldown: 5 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${runId || '-'}\nCooldown: 5 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
     const result = await pollForResult(chatId, pollUrl, session.apiKey);
@@ -1654,29 +1654,61 @@ async function runGenerate(chatId, msg, session, modelConfig) {
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
           const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`;
-          const linkCaption = `${videoCaption}\n\n🔗 Download/tonton di sini:\n${videoUrl}`;
-          // Kirim file video langsung supaya bisa diputar di chat. Kalau gagal
-          // (mis. file kegedean / Telegram tak bisa fetch URL), fallback ke link.
+          let sent = false;
+          let localPath = null;
+
+          // 1) Kirim via URL: Telegram fetch server-side lalu re-host videonya,
+          //    jadi user TIDAK pernah melihat URL sumber (backend tersembunyi).
           try {
             await bot.sendVideo(chatId, videoUrl, { caption: videoCaption });
-            console.log("[flora] Video file sent to user");
-          } catch (videoErr) {
-            console.error("[flora] sendVideo failed, fallback to link:", videoErr.message);
+            sent = true;
+            console.log("[deliver] Video sent via remote URL");
+          } catch (e1) {
+            console.error("[deliver] sendVideo(url) failed:", e1.message);
+          }
+
+          // 2) Fallback: download ke server kita sendiri lalu upload file-nya
+          //    (Telegram terima bytes, tetap tanpa membocorkan URL sumber).
+          if (!sent) {
             try {
-              await bot.sendMessage(chatId, linkCaption, { disable_web_page_preview: false });
-              console.log("[flora] Video link sent to user (fallback)");
-            } catch (msgErr) {
-              console.error("[flora] sendMessage link failed:", msgErr.message);
+              const fname = `out_${crypto.randomBytes(8).toString("hex")}.mp4`;
+              localPath = path.join(UPLOAD_DIR, fname);
+              const resp = await axios.get(videoUrl, { responseType: "arraybuffer", timeout: 120000 });
+              fs.writeFileSync(localPath, Buffer.from(resp.data));
+              await bot.sendVideo(chatId, localPath, { caption: videoCaption });
+              sent = true;
+              console.log("[deliver] Video sent via local upload");
+              try { fs.unlinkSync(localPath); localPath = null; } catch (_) {}
+            } catch (e2) {
+              console.error("[deliver] local upload failed:", e2.message);
             }
+          }
+
+          // 3) Last resort: kirim link PROXY milik kita sendiri (domain kita,
+          //    bukan URL sumber). File sementara sengaja tidak dihapus.
+          if (!sent && localPath && fs.existsSync(localPath)) {
+            try {
+              const proxied = getPublicFileUrl(path.basename(localPath));
+              await bot.sendMessage(chatId, `${videoCaption}\n\n🔗 Tonton di sini:\n${proxied}`, { disable_web_page_preview: false });
+              sent = true;
+              console.log("[deliver] Video sent via proxied link");
+            } catch (e3) {
+              console.error("[deliver] proxied link failed:", e3.message);
+            }
+          }
+
+          if (!sent) {
+            bot.sendMessage(chatId, "Video selesai tapi gagal dikirim. Coba /generate lagi ya.");
           }
         }
       } else {
-        console.log("[flora] No video URLs found. Full response:", JSON.stringify(result));
-        bot.sendMessage(chatId, `Video selesai tapi URL tidak ditemukan.\n\nDebug: ${JSON.stringify(result).substring(0, 500)}`);
+        console.log("[deliver] No video URLs found. Full response:", JSON.stringify(result));
+        bot.sendMessage(chatId, "Video selesai tapi hasilnya tidak bisa diambil. Coba /generate lagi ya.");
       }
     } else {
       const errDetail = result?.error_message || result?.error_code || result?.errorCode || result?.error || result?.message || JSON.stringify(result);
-      bot.sendMessage(chatId, `Generate gagal. Status: ${jobStatus}\n\nDetail: ${errDetail}`);
+      console.error(`[deliver] Generation failed status=${jobStatus} detail=${errDetail}`);
+      bot.sendMessage(chatId, "Generate gagal diproses. Coba /generate lagi ya.");
     }
 
     if (session.apiKey) unlockKey(session.apiKey);
@@ -1686,7 +1718,11 @@ async function runGenerate(chatId, msg, session, modelConfig) {
     const errBody = err.response?.data ? JSON.stringify(err.response.data).substring(0, 500) : 'N/A';
     console.error(`[flora] Generate error: status=${errStatus} message=${err.message} body=${errBody}`);
     const errorMsg = err.response?.data?.message || err.response?.data?.detail || err.response?.data?.error || err.message || 'Unknown error';
-    bot.sendMessage(chatId, `Error: ${errorMsg}`);
+    console.error(`[deliver] runGenerate error: ${errorMsg}`);
+    // Jangan bocorkan detail backend ke user; hanya tampilkan pesan aman.
+    const leaks = /flora|http|workspace|project|\bfal\b/i.test(errorMsg);
+    const userMsg = leaks ? "Terjadi kendala saat memproses. Coba /generate lagi ya." : errorMsg;
+    bot.sendMessage(chatId, userMsg);
     if (session.apiKey) unlockKey(session.apiKey);
     session.isGenerating = false;
   }
