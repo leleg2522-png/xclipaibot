@@ -468,7 +468,7 @@ function getPublicFileUrl(filename) {
   return `http://localhost:${FILE_SERVER_PORT}/files/${filename}`;
 }
 
-const COOLDOWN_MS = 5 * 60 * 1000;
+const COOLDOWN_MS = 3 * 60 * 1000;
 const DAILY_LIMIT = 20;
 const userCooldowns = new Map();
 const userDailyUsage = new Map();
@@ -1629,7 +1629,7 @@ async function runGenerate(chatId, msg, session, modelConfig) {
     setCooldown(session.userId);
     incrementDailyUsage(session.userId);
     const remaining = getDailyRemaining(session.userId);
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${runId || '-'}\nCooldown: 5 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${runId || '-'}\nCooldown: 3 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
     const result = await pollForResult(chatId, pollUrl, session.apiKey);
