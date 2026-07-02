@@ -1690,46 +1690,60 @@ async function runGenerate(chatId, msg, session, modelConfig) {
         for (const videoUrl of uniqueUrls) {
           const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`;
           let sent = false;
+          let keepFile = false;
           let localPath = null;
 
-          // 1) Kirim via URL: Telegram fetch server-side lalu re-host videonya,
-          //    jadi user TIDAK pernah melihat URL sumber (backend tersembunyi).
+          // Selalu download dulu ke SERVER KITA. URL Flora tidak pernah
+          // diberikan ke Telegram — semua pengiriman lewat domain kita.
           try {
-            await bot.sendVideo(chatId, videoUrl, { caption: videoCaption });
-            sent = true;
-            console.log("[deliver] Video sent via remote URL");
-          } catch (e1) {
-            console.error("[deliver] sendVideo(url) failed:", e1.message);
+            const fname = `out_${crypto.randomBytes(8).toString("hex")}.mp4`;
+            localPath = path.join(UPLOAD_DIR, fname);
+            const resp = await axios.get(videoUrl, { responseType: "arraybuffer", timeout: 120000 });
+            fs.writeFileSync(localPath, Buffer.from(resp.data));
+            console.log("[deliver] Video downloaded ke server kita");
+          } catch (eDl) {
+            console.error("[deliver] download gagal:", eDl.message);
           }
 
-          // 2) Fallback: download ke server kita sendiri lalu upload file-nya
-          //    (Telegram terima bytes, tetap tanpa membocorkan URL sumber).
-          if (!sent) {
+          // 1) Kirim lewat URL SERVER KITA (Telegram fetch dari domain kita, ≤20MB).
+          if (localPath && fs.existsSync(localPath) && PUBLIC_DOMAIN) {
             try {
-              const fname = `out_${crypto.randomBytes(8).toString("hex")}.mp4`;
-              localPath = path.join(UPLOAD_DIR, fname);
-              const resp = await axios.get(videoUrl, { responseType: "arraybuffer", timeout: 120000 });
-              fs.writeFileSync(localPath, Buffer.from(resp.data));
+              const ourUrl = getPublicFileUrl(path.basename(localPath));
+              await bot.sendVideo(chatId, ourUrl, { caption: videoCaption });
+              sent = true;
+              console.log("[deliver] Video sent via URL server kita");
+            } catch (e1) {
+              console.error("[deliver] sendVideo(our url) failed:", e1.message);
+            }
+          }
+
+          // 2) Fallback: upload bytes dari server kita langsung ke Telegram (≤50MB).
+          if (!sent && localPath && fs.existsSync(localPath)) {
+            try {
               await bot.sendVideo(chatId, localPath, { caption: videoCaption });
               sent = true;
-              console.log("[deliver] Video sent via local upload");
-              try { fs.unlinkSync(localPath); localPath = null; } catch (_) {}
+              console.log("[deliver] Video sent via upload dari server kita");
             } catch (e2) {
               console.error("[deliver] local upload failed:", e2.message);
             }
           }
 
-          // 3) Last resort: kirim link PROXY milik kita sendiri (domain kita,
-          //    bukan URL sumber). File sementara sengaja tidak dihapus.
-          if (!sent && localPath && fs.existsSync(localPath)) {
+          // 3) Last resort (video >50MB): kirim LINK server kita. File dipertahankan.
+          if (!sent && localPath && fs.existsSync(localPath) && PUBLIC_DOMAIN) {
             try {
-              const proxied = getPublicFileUrl(path.basename(localPath));
-              await bot.sendMessage(chatId, `${videoCaption}\n\n🔗 Tonton di sini:\n${proxied}`, { disable_web_page_preview: false });
+              const ourUrl = getPublicFileUrl(path.basename(localPath));
+              await bot.sendMessage(chatId, `${videoCaption}\n\n🔗 Tonton di sini:\n${ourUrl}`, { disable_web_page_preview: false });
               sent = true;
-              console.log("[deliver] Video sent via proxied link");
+              keepFile = true;
+              console.log("[deliver] Video sent via LINK server kita");
             } catch (e3) {
-              console.error("[deliver] proxied link failed:", e3.message);
+              console.error("[deliver] our link failed:", e3.message);
             }
+          }
+
+          // Bersihkan file kecuali dikirim sebagai link (link butuh file tetap ada).
+          if (localPath && fs.existsSync(localPath) && !keepFile) {
+            try { fs.unlinkSync(localPath); } catch (_) {}
           }
 
           if (!sent) {
