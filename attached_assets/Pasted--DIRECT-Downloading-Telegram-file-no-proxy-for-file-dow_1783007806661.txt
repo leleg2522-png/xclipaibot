@@ -1,0 +1,22 @@
+[DIRECT] Downloading Telegram file (no proxy for file downloads)
+File downloaded: 1126dcfacd5d9d1c18bb55896c41cb0c.jpg, publicUrl: https://xclipaibot-production.up.railway.app/files/1126dcfacd5d9d1c18bb55896c41cb0c.jpg, telegramUrl: https://api.telegram.org/file/bot8392230745:AAF016R2Fj5psrda...
+[DIRECT] Downloading Telegram file (no proxy for file downloads)
+File downloaded: 0df356538ffca53e137f695f4e3a0b4e.mp4, publicUrl: https://xclipaibot-production.up.railway.app/files/0df356538ffca53e137f695f4e3a0b4e.mp4, telegramUrl: https://api.telegram.org/file/bot8392230745:AAF016R2Fj5psrda...
+[flora] Submit model=kling-2-6-pro-mc
+[flora] image_url: https://xclipaibot-production.up.railway.app/files/1126dcfacd5d9d1c18bb55896c41cb0c.jpg
+[flora] video_url: https://xclipaibot-production.up.railway.app/files/0df356538ffca53e137f695f4e3a0b4e.mp4
+[flora] prompt: Animate the character in the image to follow the motion in the reference video.
+[flora] params: {"image_url":"https://xclipaibot-production.up.railway.app/files/1126dcfacd5d9d1c18bb55896c41cb0c.jpg","character_orientation":"video","video_url":"https://xclipaibot-production.up.railway.app/files/0df356538ffca53e137f695f4e3a0b4e.mp4"}
+[flora] Request body: {"type":"video","prompt":"Animate the character in the image to follow the motion in the reference video.","params":{"image_url":"https://xclipaibot-production.up.railway.app/files/1126dcfacd5d9d1c18bb55896c41cb0c.jpg","character_orientation":"video","video_url":"https://xclipaibot-production.up.railway.app/files/0df356538ffca53e137f695f4e3a0b4e.mp4"}}
+[flora] Pool punya 1 key (mode rotasi)
+[flora] Attempt 1/1 using key ...JBQ8QY
+[flora] Resolved model "Kling MC V3 PRO" -> iv2v-kling-2.6-motion
+[flora] Context for key ...JBQ8QY: ws=ws_qd76kwdct81akqn8vmxb7ebhk58970gk prj=prj_ns7f8g5vcxgedpkjkwffww8ern897hkm
+Key ...JBQ8QY LOCKED
+[flora] Full submit response: {"run_id":"run_m17b89twsfaxdb6khjhwwh99nn89r7m8","type":"generation","model":{"model_id":"iv2v-kling-2.6-motion"},"estimated_seconds":670,"charged_cost":0.471,"poll_url":"https://app.flora.ai/api/v1/runs/run_m17b89twsfaxdb6khjhwwh99nn89r7m8","project_id":"prj_ns7f8g5vcxgedpkjkwffww8ern897hkm"}
+[flora] Job run_m17b89twsfaxdb6khjhwwh99nn89r7m8 submitted in 4.7s (pollUrl=https://app.flora.ai/api/v1/runs/run_m17b89twsfaxdb6khjhwwh99nn89r7m8)
+[flora] Poll mode: poll only (15s), target=https://app.flora.ai/api/v1/runs/run_m17b89twsfaxdb6khjhwwh99nn89r7m8
+[flora] Poll #1: status=failed (16s)
+[flora] Task failed! Full response: {"run_id":"run_m17b89twsfaxdb6khjhwwh99nn89r7m8","status":"failed","progress":100,"created_at":1783006659238.704,"completed_at":1783006673158,"error_code":"GENERATION_GENERIC_ERROR"}
+[flora] Job run_m17b89twsfaxdb6khjhwwh99nn89r7m8 polling finished in 16.4s
+[deliver] Generation failed status=failed detail=GENERATION_GENERIC_ERROR
