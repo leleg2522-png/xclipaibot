@@ -63,14 +63,14 @@ if (!TELEGRAM_TOKEN) {
 }
 
 const FLORA_BASE = "https://app.flora.ai";
-const FLORA_MODEL_NAME = "Kling v3.0 Pro";
+const FLORA_MODEL_NAME = "Kling MC V3 PRO";
 let FLORA_MODEL_ID = process.env.FLORA_MODEL_ID || null;
 const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || "").split(",").map(id => id.trim()).filter(Boolean);
 
 const MODELS = {
   // === MOTION CONTROL (foto karakter + video referensi gerakan) via Flora AI ===
   'kling-2-6-pro-mc': {
-    name: 'Kling v3.0 Pro',
+    name: 'Kling MC V3 PRO',
     emoji: '🔥',
     floraModel: FLORA_MODEL_NAME,
     imageField: 'image_url',
@@ -86,7 +86,7 @@ let VPS_PROXIES = [];
 
 function getModelKeyboard() {
   return [
-    [{ text: "🔥 Kling v3.0 Pro", callback_data: "model_kling-2-6-pro-mc" }],
+    [{ text: "🔥 Kling MC V3 PRO", callback_data: "model_kling-2-6-pro-mc" }],
   ];
 }
 
@@ -454,7 +454,7 @@ app.use(express.json());
 app.use("/files", express.static(UPLOAD_DIR));
 
 app.get("/", (req, res) => {
-  res.json({ status: "ok", bot: "Kling v3.0 Pro" });
+  res.json({ status: "ok", bot: "Kling MC V3 PRO" });
 });
 
 app.listen(FILE_SERVER_PORT, "0.0.0.0", () => {
@@ -743,10 +743,10 @@ bot.onText(/\/start/, (msg) => {
     msg.chat.id,
 `🎬 AI Video Generator Bot
 
-Bot ini menghasilkan video menggunakan model 🔥 Kling v3.0 Pro.
+Bot ini menghasilkan video menggunakan model 🔥 Kling MC V3 PRO.
 
 🎥 Motion Control (foto karakter + video referensi gerakan):
-🔥 Kling v3.0 Pro
+🔥 Kling MC V3 PRO
 
 Cara pakai:
 1️⃣ /login → pilih model
@@ -948,7 +948,7 @@ bot.onText(/\/orientation (video|image)/, (msg, match) => {
 });
 
 bot.onText(/\/quality/, (msg) => {
-  bot.sendMessage(msg.chat.id, "Kualitas kini terintegrasi dalam pilihan model.\n\nGunakan /generate lalu pilih model 🔥 Kling v3.0 Pro.");
+  bot.sendMessage(msg.chat.id, "Kualitas kini terintegrasi dalam pilihan model.\n\nGunakan /generate lalu pilih model 🔥 Kling MC V3 PRO.");
 });
 
 bot.onText(/\/addkeys(.*)/, async (msg, match) => {
@@ -1235,7 +1235,7 @@ bot.on("document", async (msg) => {
       if (session.videoFile) {
         reply += "\n\nFoto + video sudah lengkap. Ketik /generate untuk mulai.";
       } else {
-        reply += "\n\nKetik /generate untuk pilih model.\n\n💡 Jika pakai model Kling v3.0 Pro, kirim video referensi gerakan dulu sebelum /generate.";
+        reply += "\n\nKetik /generate untuk pilih model.\n\n💡 Jika pakai model Kling MC V3 PRO, kirim video referensi gerakan dulu sebelum /generate.";
       }
       bot.sendMessage(chatId, reply);
     } else if (mimeType.startsWith("video/")) {
@@ -1264,7 +1264,7 @@ async function submitVideo(session, modelConfig) {
   console.log(`[flora] image_url: ${imageUrl}`);
 
   // Flora "generate" carries model inputs inside the `params` map (see
-  // developer.flora.ai generations/create). Kling v3.0 Pro needs
+  // developer.flora.ai generations/create). Kling MC V3 PRO needs
   // image_url (character) + video_url (motion reference) + character_orientation.
   const params = {
     image_url: imageUrl,
@@ -1767,7 +1767,7 @@ bot.on("polling_error", (err) => {
   console.error("Polling error:", err.code, err.message);
 });
 
-console.log("Bot Telegram AI Video Generator (Flora AI - Kling v3.0 Pro) sudah berjalan!");
+console.log("Bot Telegram AI Video Generator (Flora AI - Kling MC V3 PRO) sudah berjalan!");
 console.log(`Model tersedia: ${Object.keys(MODELS).join(", ")}`);
 console.log(`Admin IDs: ${ADMIN_IDS.length > 0 ? ADMIN_IDS.join(", ") : "(tidak diset - /addkeys dan /poolstatus tidak bisa diakses)"}`);
 console.log(`Keys per user: ${KEYS_PER_USER}`);
