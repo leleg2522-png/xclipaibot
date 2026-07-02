@@ -254,6 +254,36 @@ async function getFloraModelId(apiKey) {
   return FLORA_MODEL_ID;
 }
 
+// Each Flora API key belongs to an account with its own workspace + project.
+// A generate call requires both, so we discover and cache them per key.
+const floraContextCache = new Map();
+async function getFloraContext(apiKey) {
+  if (floraContextCache.has(apiKey)) return floraContextCache.get(apiKey);
+
+  const wsResp = await makeFloraRequest('GET', `${FLORA_BASE}/api/v1/workspaces`, apiKey);
+  const workspaces = wsResp.data?.workspaces || wsResp.data?.data || (Array.isArray(wsResp.data) ? wsResp.data : []);
+  const workspaceId = workspaces[0]?.workspace_id || workspaces[0]?.id;
+  if (!workspaceId) throw new Error('Tidak ada workspace pada akun Flora untuk API key ini.');
+
+  const prjResp = await makeFloraRequest('GET', `${FLORA_BASE}/api/v1/projects?workspace_id=${encodeURIComponent(workspaceId)}`, apiKey);
+  const projects = prjResp.data?.projects || prjResp.data?.data || (Array.isArray(prjResp.data) ? prjResp.data : []);
+  let projectId = projects[0]?.project_id || projects[0]?.id;
+
+  if (!projectId) {
+    const created = await makeFloraRequest('POST', `${FLORA_BASE}/api/v1/projects`, apiKey, {
+      workspace_id: workspaceId,
+      name: 'Telegram Bot',
+    });
+    projectId = created.data?.project_id || created.data?.id || created.data?.project?.project_id;
+  }
+  if (!projectId) throw new Error('Tidak bisa menemukan/membuat project Flora untuk API key ini.');
+
+  const ctx = { workspaceId, projectId };
+  floraContextCache.set(apiKey, ctx);
+  console.log(`[flora] Context for key ...${apiKey.slice(-6)}: ws=${workspaceId} prj=${projectId}`);
+  return ctx;
+}
+
 const lockedKeys = new Set();
 
 function lockKey(key) {
@@ -1210,28 +1240,29 @@ async function submitVideo(session, modelConfig) {
   console.log(`[flora] Submit model=${session.selectedModel}`);
   console.log(`[flora] image_url: ${imageUrl}`);
 
-  // Flora "generate" expects an ordered inputs array of { type, value }.
-  // For Kling 2.6 Pro Motion Control: character image + reference video (+ optional prompt).
-  const inputs = [
-    { type: 'IMAGE_URL', value: imageUrl },
-  ];
+  // Flora "generate" carries model inputs inside the `params` map (see
+  // developer.flora.ai generations/create). Kling 2.6 Pro Motion Control needs
+  // image_url (character) + video_url (motion reference) + character_orientation.
+  const params = {
+    image_url: imageUrl,
+    character_orientation: session.orientation === 'image' ? 'image' : 'video',
+  };
 
   if (session.videoFile) {
-    inputs.push({ type: 'VIDEO_URL', value: session.videoFile.publicUrl });
+    params.video_url = session.videoFile.publicUrl;
     console.log(`[flora] video_url: ${session.videoFile.publicUrl}`);
   }
 
-  if (session.prompt) {
-    inputs.push({ type: 'TEXT', value: session.prompt });
-    console.log(`[flora] prompt: ${session.prompt}`);
-  }
+  // Flora requires a non-empty top-level prompt for this model.
+  const prompt = session.prompt || 'Animate the character in the image to follow the motion in the reference video.';
 
   const body = {
-    inputs,
-    parameters: {},
-    mode: 'async',
+    type: 'video',
+    prompt,
+    params,
   };
-
+  console.log(`[flora] prompt: ${prompt}`);
+  console.log(`[flora] params:`, JSON.stringify(params));
   console.log(`[flora] Request body:`, JSON.stringify(body));
 
   const userKeys = await assignKeysToUser(session.userId);
@@ -1268,7 +1299,9 @@ async function submitVideo(session, modelConfig) {
 
     try {
       const modelId = await getFloraModelId(apiKey);
-      const response = await scheduleSubmit(() => makeFloraRequest('POST', url, apiKey, { model: modelId, ...body }));
+      const ctx = await getFloraContext(apiKey);
+      const fullBody = { model: modelId, workspace_id: ctx.workspaceId, project_id: ctx.projectId, ...body };
+      const response = await scheduleSubmit(() => makeFloraRequest('POST', url, apiKey, fullBody));
       markKeyOk(apiKey);
       lockKey(apiKey);
       session.apiKey = apiKey;
@@ -1546,8 +1579,8 @@ async function runGenerate(chatId, msg, session, modelConfig) {
     const submitResult = await submitVideo(session, modelConfig);
     const submitTime = ((Date.now() - submitStart) / 1000).toFixed(1);
     console.log("[flora] Full submit response:", JSON.stringify(submitResult));
-    const runId = submitResult?.runId || submitResult?.id || submitResult?.data?.runId;
-    const pollUrl = submitResult?.pollUrl || submitResult?.data?.pollUrl || runId;
+    const runId = submitResult?.run_id || submitResult?.runId || submitResult?.id || submitResult?.data?.run_id;
+    const pollUrl = submitResult?.poll_url || submitResult?.pollUrl || submitResult?.data?.poll_url || runId;
 
     if (!pollUrl) {
       console.error("[flora] No runId/pollUrl in response:", JSON.stringify(submitResult));
@@ -1633,7 +1666,7 @@ async function runGenerate(chatId, msg, session, modelConfig) {
         bot.sendMessage(chatId, `Video selesai tapi URL tidak ditemukan.\n\nDebug: ${JSON.stringify(result).substring(0, 500)}`);
       }
     } else {
-      const errDetail = result?.errorCode || result?.error || result?.message || JSON.stringify(result);
+      const errDetail = result?.error_message || result?.error_code || result?.errorCode || result?.error || result?.message || JSON.stringify(result);
       bot.sendMessage(chatId, `Generate gagal. Status: ${jobStatus}\n\nDetail: ${errDetail}`);
     }
 
