@@ -16,7 +16,6 @@
   "dependencies": {
     "@types/node": "^22.19.17",
     "axios": "^1.15.0",
-    "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
     "https-proxy-agent": "^7.0.6",
