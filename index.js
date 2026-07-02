@@ -62,166 +62,31 @@ if (!TELEGRAM_TOKEN) {
   process.exit(1);
 }
 
-const API_BASE = "https://api.freepik.com";
+const FLORA_BASE = "https://app.flora.ai";
+const FLORA_MODEL_NAME = "Kling 2.6 Pro Motion Control";
+let FLORA_MODEL_ID = process.env.FLORA_MODEL_ID || null;
 const ADMIN_IDS = (process.env.ADMIN_TELEGRAM_IDS || "").split(",").map(id => id.trim()).filter(Boolean);
 
 const MODELS = {
-  // === IMAGE TO VIDEO (foto saja, tanpa video referensi) ===
-  'kling-2-6-pro': {
-    name: 'Kling 2.6 Pro',
-    emoji: '🔥',
-    submitUrl: `${API_BASE}/v1/ai/image-to-video/kling-v2-6-pro`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`,
-    imageField: 'image',
-    requiresVideo: false,
-    motionControl: false,
-    hasAudio: true,
-  },
-  'kling-3-pro': {
-    name: 'Kling 3.0 Pro',
-    emoji: '💎',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v3-pro`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/video/kling-v3-pro/${taskId}`,
-    imageField: 'start_image_url',
-    requiresVideo: false,
-    motionControl: false,
-    hasAudio: true,
-  },
-  'kling-2-5-pro': {
-    name: 'Kling 2.5 Pro',
-    emoji: '⚡',
-    submitUrl: `${API_BASE}/v1/ai/image-to-video/kling-v2-5-pro`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-5-pro/${taskId}`,
-    imageField: 'image',
-    requiresVideo: false,
-    motionControl: false,
-  },
-  'kling-2-1-pro': {
-    name: 'Kling 2.1 Pro',
-    emoji: '🎯',
-    submitUrl: `${API_BASE}/v1/ai/image-to-video/kling-v2-1-pro`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-1/${taskId}`,
-    imageField: 'image',
-    requiresVideo: false,
-    motionControl: false,
-  },
-  'kling-2-1-master': {
-    name: 'Kling 2.1 Master',
-    emoji: '👑',
-    submitUrl: `${API_BASE}/v1/ai/image-to-video/kling-v2-1-master`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-1-master/${taskId}`,
-    imageField: 'image',
-    requiresVideo: false,
-    motionControl: false,
-  },
-  'wan-2-6-1080p': {
-    name: 'Wan 2.6 1080p',
-    emoji: '🌊',
-    submitUrl: `${API_BASE}/v1/ai/image-to-video/wan-v2-6-1080p`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/wan-v2-6-1080p/${taskId}`,
-    imageField: 'image',
-    requiresVideo: false,
-    motionControl: false,
-  },
-  'seedance-pro-1080p': {
-    name: 'Seedance Pro 1080p',
-    emoji: '🌱',
-    submitUrl: `${API_BASE}/v1/ai/image-to-video/seedance-pro-1080p`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/seedance-pro-1080p/${taskId}`,
-    imageField: 'image',
-    requiresVideo: false,
-    motionControl: false,
-  },
-  'veo-3-1': {
-    name: 'Veo 3.1 4K',
-    emoji: '🎬',
-    submitUrl: `${API_BASE}/v1/ai/image-to-video/veo-3-1`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/veo-3-1/${taskId}`,
-    imageField: 'image',
-    requiresVideo: false,
-    motionControl: false,
-    hasAudio: true,
-    fixedDuration: "8",
-    resolution: "4k",
-    aspectRatio: "16:9",
-    promptSuffix: "All voiceover, dialogue, and narration must be in Indonesian (Bahasa Indonesia). Use natural Indonesian speech",
-  },
-  // === MOTION CONTROL (foto + video referensi gerakan) ===
-  'kling-2-6-std-mc': {
-    name: 'Kling 2.6 Standard MC',
-    emoji: '⚡',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-6-motion-control-std`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`,
-    imageField: 'image_url',
-    requiresVideo: true,
-    motionControl: true,
-    hasAudio: true,
-  },
+  // === MOTION CONTROL (foto karakter + video referensi gerakan) via Flora AI ===
   'kling-2-6-pro-mc': {
-    name: 'Kling 2.6 Pro MC',
+    name: 'Kling 2.6 Pro Motion Control',
     emoji: '🔥',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v2-6-motion-control-pro`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`,
-    imageField: 'image_url',
-    requiresVideo: true,
-    motionControl: true,
-    hasAudio: true,
-  },
-  'kling-3-std-mc': {
-    name: 'Kling 3.0 Standard MC',
-    emoji: '🌟',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v3-motion-control-std`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/video/kling-v3-motion-control-std/${taskId}`,
-    imageField: 'image_url',
-    requiresVideo: true,
-    motionControl: true,
-    hasAudio: true,
-  },
-  'kling-3-pro-mc': {
-    name: 'Kling 3.0 Pro MC',
-    emoji: '💎',
-    submitUrl: `${API_BASE}/v1/ai/video/kling-v3-motion-control-pro`,
-    statusUrl: (taskId) => `${API_BASE}/v1/ai/video/kling-v3-motion-control-pro/${taskId}`,
+    floraModel: FLORA_MODEL_NAME,
     imageField: 'image_url',
     requiresVideo: true,
     motionControl: true,
     hasAudio: true,
   },
 };
+
 const KEYS_PER_USER = 1;
 
 let VPS_PROXIES = [];
 
 function getModelKeyboard() {
   return [
-    [{ text: "── 🎬 Image to Video ──", callback_data: "noop" }],
-    [
-      { text: "💎 Kling 3.0 Pro", callback_data: "model_kling-3-pro" },
-    ],
-    [
-      { text: "🔥 Kling 2.6 Pro", callback_data: "model_kling-2-6-pro" },
-      { text: "⚡ Kling 2.5 Pro", callback_data: "model_kling-2-5-pro" },
-    ],
-    [
-      { text: "🎯 Kling 2.1 Pro", callback_data: "model_kling-2-1-pro" },
-      { text: "👑 Kling 2.1 Master", callback_data: "model_kling-2-1-master" },
-    ],
-    [
-      { text: "🌊 Wan 2.6 1080p", callback_data: "model_wan-2-6-1080p" },
-      { text: "🌱 Seedance Pro 1080p", callback_data: "model_seedance-pro-1080p" },
-    ],
-    [
-      { text: "🎬 Veo 3.1 4K", callback_data: "model_veo-3-1" },
-    ],
-    [{ text: "── 🎥 Motion Control ──", callback_data: "noop" }],
-    [
-      { text: "💎 Kling 3.0 Pro MC", callback_data: "model_kling-3-pro-mc" },
-      { text: "🌟 Kling 3.0 Std MC", callback_data: "model_kling-3-std-mc" },
-    ],
-    [
-      { text: "⚡ Kling 2.6 Std MC", callback_data: "model_kling-2-6-std-mc" },
-      { text: "🔥 Kling 2.6 Pro MC", callback_data: "model_kling-2-6-pro-mc" },
-    ],
+    [{ text: "🔥 Kling 2.6 Pro Motion Control", callback_data: "model_kling-2-6-pro-mc" }],
   ];
 }
 
@@ -259,7 +124,7 @@ function buildProxyUrl(proxy) {
   return `http://${proxy.host}:${proxy.port}`;
 }
 
-function freepikHeaders(apiKey) {
+function floraHeaders(apiKey) {
   return {
     'Content-Type': 'application/json',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -267,11 +132,11 @@ function freepikHeaders(apiKey) {
     'Accept-Language': 'en-US,en;q=0.9',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
-    'x-freepik-api-key': apiKey.replace(/[^\x20-\x7E]/g, '').trim()
+    'Authorization': `Bearer ${apiKey.replace(/[^\x20-\x7E]/g, '').trim()}`
   };
 }
 
-function isFreepikApiError(err) {
+function isApiError(err) {
   const status = err.response?.status;
   if (!status) return false;
   const body = err.response?.data;
@@ -285,11 +150,11 @@ function randomDelay(baseMs, jitterMs) {
   return baseMs + Math.floor(Math.random() * jitterMs);
 }
 
-async function makeFreepikRequest(method, url, apiKey, body = null) {
+async function makeFloraRequest(method, url, apiKey, body = null) {
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   if (VPS_PROXIES.length === 0) {
-    const config = { method, url, headers: freepikHeaders(apiKey), timeout: 120000 };
+    const config = { method, url, headers: floraHeaders(apiKey), timeout: 120000 };
     if (body) config.data = body;
     return axios(config);
   }
@@ -305,7 +170,7 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
     const config = {
       method,
       url,
-      headers: freepikHeaders(apiKey),
+      headers: floraHeaders(apiKey),
       timeout: 120000,
       httpsAgent: new HttpsProxyAgent(proxyUrl, { rejectUnauthorized: false }),
       proxy: false
@@ -318,22 +183,22 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
     try {
       const resp = await axios(config);
       if (typeof resp.data === 'string' && resp.data.includes('Access denied')) {
-        throw new Error('Blocked by Freepik');
+        throw new Error('Blocked by proxy/API');
       }
       return resp;
     } catch (err) {
       const status = err.response?.status;
 
       if (status === 429) throw err;
-      if (status === 401 && isFreepikApiError(err)) throw err;
-      if (status === 402 && isFreepikApiError(err)) throw err;
-      if (status === 403 && isFreepikApiError(err)) throw err;
+      if (status === 401 && isApiError(err)) throw err;
+      if (status === 402 && isApiError(err)) throw err;
+      if (status === 403 && isApiError(err)) throw err;
 
       const errMsg = (err.message || '').toLowerCase();
       const isSocketErr = errMsg.includes('socket') || errMsg.includes('econnreset') ||
                           errMsg.includes('etimedout') || errMsg.includes('ssl') ||
                           errMsg.includes('econnrefused') || errMsg.includes('enotfound');
-      const isProxyBlock = (status === 403 && !isFreepikApiError(err)) ||
+      const isProxyBlock = (status === 403 && !isApiError(err)) ||
                            status === 407 || status === 502 || status === 503 || status === 504 ||
                            status === 522 || status === 524;
 
@@ -351,7 +216,7 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
 
   console.log(`[PROXY] All ${maxAttempts} proxy attempts failed, trying DIRECT connection...`);
   try {
-    const directConfig = { method, url, headers: freepikHeaders(apiKey), timeout: 120000 };
+    const directConfig = { method, url, headers: floraHeaders(apiKey), timeout: 120000 };
     if (body) directConfig.data = body;
     const resp = await axios(directConfig);
     console.log(`[DIRECT] Success without proxy`);
@@ -361,6 +226,34 @@ async function makeFreepikRequest(method, url, apiKey, body = null) {
     throw directErr;
   }
 }
+
+// Discovers the Flora model id for the configured model name from the /models
+// catalog. Flora does not publish the id, so we look it up at runtime and cache it.
+async function getFloraModelId(apiKey) {
+  if (FLORA_MODEL_ID) return FLORA_MODEL_ID;
+  const resp = await makeFloraRequest('GET', `${FLORA_BASE}/api/v1/models`, apiKey);
+  const payload = resp.data;
+  const list = Array.isArray(payload) ? payload
+    : (payload?.models || payload?.data || payload?.results || []);
+  const wanted = FLORA_MODEL_NAME.toLowerCase().replace(/\s+/g, ' ').trim();
+  const norm = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let match = list.find(m => norm(m.name) === wanted || norm(m.displayName) === wanted || norm(m.title) === wanted);
+  if (!match) {
+    match = list.find(m => {
+      const n = norm(m.name) + ' ' + norm(m.displayName) + ' ' + norm(m.title);
+      return n.includes('kling') && n.includes('2.6') && n.includes('motion');
+    });
+  }
+  if (!match) {
+    const available = list.map(m => m.name || m.displayName || m.title || m.id).filter(Boolean);
+    throw new Error(`Model "${FLORA_MODEL_NAME}" tidak ditemukan di katalog Flora. Tersedia: ${available.slice(0, 40).join(', ')}`);
+  }
+  FLORA_MODEL_ID = match.id || match.modelId || match.model_id || match.slug;
+  console.log(`[flora] Resolved model "${FLORA_MODEL_NAME}" -> ${FLORA_MODEL_ID}`);
+  if (!FLORA_MODEL_ID) throw new Error('Flora model ditemukan tapi tidak punya id');
+  return FLORA_MODEL_ID;
+}
+
 const lockedKeys = new Set();
 
 function lockKey(key) {
@@ -508,44 +401,8 @@ const FILE_SERVER_PORT = process.env.PORT || 5000;
 app.use(express.json());
 app.use("/files", express.static(UPLOAD_DIR));
 
-const pendingTasks = new Map();
-
 app.get("/", (req, res) => {
-  res.json({ status: "ok", bot: "Kling 2.6 Motion Control", pendingTasks: pendingTasks.size });
-});
-
-app.post("/webhook/freepik", async (req, res) => {
-  try {
-    const payload = req.body;
-    console.log("[WEBHOOK] Received:", JSON.stringify(payload).substring(0, 1000));
-
-    const taskId = payload?.data?.task_id || payload?.task_id || payload?.id;
-    if (!taskId) {
-      console.log("[WEBHOOK] No task_id found in payload");
-      return res.status(400).json({ error: "No task_id" });
-    }
-
-    const taskInfo = pendingTasks.get(taskId);
-    if (!taskInfo) {
-      console.log(`[WEBHOOK] Unknown task ${taskId}, ignoring`);
-      return res.status(200).json({ ok: true });
-    }
-
-    const result = payload?.data || payload;
-    const status = (result?.status || "").toUpperCase();
-    console.log(`[WEBHOOK] Task ${taskId} status=${status}`);
-
-    if (status === "COMPLETED" || status === "FAILED" || status === "ERROR") {
-      taskInfo.resolve(result);
-      pendingTasks.delete(taskId);
-      console.log(`[WEBHOOK] Task ${taskId} resolved (${status})`);
-    }
-
-    res.status(200).json({ ok: true });
-  } catch (err) {
-    console.error("[WEBHOOK] Error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
+  res.json({ status: "ok", bot: "Kling 2.6 Pro Motion Control (Flora AI)" });
 });
 
 app.listen(FILE_SERVER_PORT, "0.0.0.0", () => {
@@ -565,7 +422,7 @@ const userCooldowns = new Map();
 const userDailyUsage = new Map();
 const userKeyRotation = new Map();
 
-// Global submission queue — staggers Freepik API calls across users
+// Global submission queue — staggers Flora API calls across users
 // to avoid burst patterns that trigger abuse/IP bans
 const SUBMIT_JITTER_MIN_MS = 8000;
 const SUBMIT_JITTER_MAX_MS = 20000;
@@ -834,24 +691,14 @@ bot.onText(/\/start/, (msg) => {
     msg.chat.id,
 `🎬 AI Video Generator Bot
 
-Bot ini menghasilkan video menggunakan berbagai model AI terbaik via Freepik API.
+Bot ini menghasilkan video menggunakan model 🔥 Kling 2.6 Pro Motion Control via Flora AI.
 
-🎬 Image to Video (foto saja):
-🔥 Kling 2.6 Pro | ⚡ Kling 2.5 Pro
-🎯 Kling 2.1 Pro | 👑 Kling 2.1 Master
-🌊 Wan 2.6 1080p | 🌱 Seedance Pro 1080p
+🎥 Motion Control (foto karakter + video referensi gerakan):
+🔥 Kling 2.6 Pro Motion Control
 
-🎥 Motion Control (foto + video referensi):
-⚡ Kling 2.6 Std MC | 🔥 Kling 2.6 Pro MC
-
-Cara pakai Image to Video:
+Cara pakai:
 1️⃣ /login → pilih model
-2️⃣ Kirim foto karakter
-3️⃣ /generate → langsung proses
-
-Cara pakai Motion Control:
-1️⃣ /login → pilih model MC
-2️⃣ Kirim foto karakter + video referensi
+2️⃣ Kirim foto karakter + video referensi gerakan
 3️⃣ /generate → langsung proses
 
 Perintah:
@@ -860,7 +707,6 @@ Perintah:
 /logout - Logout
 /generate - Generate video
 /prompt [teks] - Set prompt tambahan
-/orientation [video|image] - Set orientasi karakter
 /status - Cek status session saat ini
 /reset - Reset session
 
@@ -1357,63 +1203,43 @@ bot.on("document", async (msg) => {
 });
 
 async function submitVideo(session, modelConfig) {
-  const url = modelConfig.submitUrl;
+  const url = `${FLORA_BASE}/api/v1/generate`;
 
   const imageUrl = session.imageFile.publicUrl;
 
-  console.log(`[freepik] Submit model=${session.selectedModel}`);
-  console.log(`[freepik] image_url: ${imageUrl}`);
+  console.log(`[flora] Submit model=${session.selectedModel}`);
+  console.log(`[flora] image_url: ${imageUrl}`);
 
-  const webhookUrl = PUBLIC_DOMAIN ? `https://${PUBLIC_DOMAIN}/webhook/freepik` : null;
+  // Flora "generate" expects an ordered inputs array of { type, value }.
+  // For Kling 2.6 Pro Motion Control: character image + reference video (+ optional prompt).
+  const inputs = [
+    { type: 'IMAGE_URL', value: imageUrl },
+  ];
 
-  const imageField = modelConfig.imageField || 'image_url';
+  if (session.videoFile) {
+    inputs.push({ type: 'VIDEO_URL', value: session.videoFile.publicUrl });
+    console.log(`[flora] video_url: ${session.videoFile.publicUrl}`);
+  }
+
+  if (session.prompt) {
+    inputs.push({ type: 'TEXT', value: session.prompt });
+    console.log(`[flora] prompt: ${session.prompt}`);
+  }
+
   const body = {
-    [imageField]: imageUrl,
+    inputs,
+    parameters: {},
+    mode: 'async',
   };
 
-  if (modelConfig.motionControl && session.videoFile) {
-    body.video_url = session.videoFile.publicUrl;
-    body.character_orientation = session.orientation || "video";
-    body.cfg_scale = 0.5;
-    console.log(`[freepik] video_url: ${body.video_url}`);
-  }
-
-  if (!modelConfig.motionControl) {
-    let userPrompt = session.prompt || "Generate a creative video from this image";
-    if (modelConfig.promptSuffix) {
-      userPrompt = `${userPrompt}. ${modelConfig.promptSuffix}`;
-    }
-    body.prompt = userPrompt;
-    body.duration = modelConfig.fixedDuration || session.duration || "5";
-    if (!modelConfig.fixedDuration) {
-      body.cfg_scale = 0.5;
-    }
-    if (modelConfig.resolution) {
-      body.resolution = modelConfig.resolution;
-    }
-    if (modelConfig.aspectRatio) {
-      body.aspect_ratio = modelConfig.aspectRatio;
-    }
-  }
-
-  if (modelConfig.hasAudio) {
-    body.generate_audio = true;
-    console.log(`[freepik] Audio enabled: generate_audio=true`);
-  }
-
-  if (webhookUrl) {
-    body.webhook_url = webhookUrl;
-    console.log(`[freepik] Webhook URL: ${webhookUrl}`);
-  }
-
-  console.log(`[freepik] Request body:`, JSON.stringify(body));
+  console.log(`[flora] Request body:`, JSON.stringify(body));
 
   const userKeys = await assignKeysToUser(session.userId);
   if (userKeys.length === 0) {
     throw new Error("Tidak ada API key tersedia. Hubungi admin.");
   }
 
-  console.log(`[freepik] User ${session.userId} has ${userKeys.length} keys`);
+  console.log(`[flora] User ${session.userId} has ${userKeys.length} keys`);
 
   const userRoundRobin = userKeyRotation.get(session.userId) || 0;
   const rotatedKeys = [...userKeys.slice(userRoundRobin % userKeys.length), ...userKeys.slice(0, userRoundRobin % userKeys.length)];
@@ -1434,51 +1260,42 @@ async function submitVideo(session, modelConfig) {
     const now = Date.now();
     const failure = keyFailures[apiKey];
     if (failure && failure.until > now) {
-      console.log(`[freepik] Key ...${apiKey.slice(-6)} on cooldown, skipping`);
+      console.log(`[flora] Key ...${apiKey.slice(-6)} on cooldown, skipping`);
       continue;
     }
 
-    console.log(`[freepik] Attempt ${attempts}/${MAX_RETRIES} using key ...${apiKey.slice(-6)}`);
+    console.log(`[flora] Attempt ${attempts}/${MAX_RETRIES} using key ...${apiKey.slice(-6)}`);
 
     try {
-      const response = await scheduleSubmit(() => makeFreepikRequest('POST', url, apiKey, body));
+      const modelId = await getFloraModelId(apiKey);
+      const response = await scheduleSubmit(() => makeFloraRequest('POST', url, apiKey, { model: modelId, ...body }));
       markKeyOk(apiKey);
       lockKey(apiKey);
       session.apiKey = apiKey;
       return response.data;
     } catch (err) {
       const status = err.response?.status;
-      const msg = err.response?.data?.message || err.response?.data?.detail || err.message;
+      const errData = err.response?.data;
+      const errCode = (errData?.errorCode || errData?.error || '').toString().toLowerCase();
+      const msg = errData?.message || errData?.detail || errData?.error || err.message;
       lastError = err;
 
-      console.log(`[freepik] Submit error: ${status} - ${msg}`);
+      console.log(`[flora] Submit error: ${status} - ${errCode || ''} ${msg}`);
 
+      // 401 unauthorized/invalid_api_key, 402 insufficient_credits, 403 forbidden -> key dead, replace it.
+      // 429 rate limited -> quota habis, replace/rotate.
       if (status === 429 || status === 401 || status === 402 || status === 403) {
-        const msgLower = (msg || '').toLowerCase();
-        const isDailyLimit = msgLower.includes('daily limit') ||
-                             msgLower.includes('hit your daily') ||
-                             msgLower.includes('more capacity');
-        const isFreeTrial = msgLower.includes('free trial') ||
-                            msgLower.includes('upgrade to a paid') ||
-                            msgLower.includes('freepik.com/developers/dashboard/billing');
-        const isInvalidKey = msgLower.includes('api key is invalid') ||
-                             msgLower.includes('unauthorized') ||
-                             msgLower.includes('verify your api key');
-        if (isDailyLimit && !isFreeTrial && !isInvalidKey) {
-          console.log(`[freepik] Key ...${apiKey.slice(-6)} hit daily limit for this model — tidak dihapus`);
-          throw new Error('DAILY_LIMIT_MODEL');
-        }
-        const reason = isFreeTrial ? 'free trial habis'
-                     : status === 429 ? 'rate limited/quota habis'
-                     : status === 401 ? 'invalid'
-                     : 'no balance/forbidden';
-        console.log(`[freepik] Key ...${apiKey.slice(-6)} ${reason}, replacing...`);
+        const reason = status === 402 ? 'kredit habis'
+                     : status === 429 ? 'rate limited'
+                     : status === 401 ? 'invalid/unauthorized'
+                     : 'forbidden';
+        console.log(`[flora] Key ...${apiKey.slice(-6)} ${reason}, replacing...`);
         const newKey = await replaceDeadKey(session.userId, apiKey);
         if (newKey && !triedKeys.has(newKey)) {
-          console.log(`[freepik] Got replacement key ...${newKey.slice(-6)}, will retry`);
+          console.log(`[flora] Got replacement key ...${newKey.slice(-6)}, will retry`);
           queue.push(newKey);
         } else if (!newKey) {
-          console.log(`[freepik] No replacement key available in pool`);
+          console.log(`[flora] No replacement key available in pool`);
         }
         continue;
       }
@@ -1488,91 +1305,55 @@ async function submitVideo(session, modelConfig) {
   }
 
   if (attempts >= MAX_RETRIES) {
-    console.log(`[freepik] Hit max retries (${MAX_RETRIES})`);
+    console.log(`[flora] Hit max retries (${MAX_RETRIES})`);
   }
   if (lastError) throw lastError;
   throw new Error("Semua API key tidak tersedia. Coba lagi nanti.");
 }
 
-async function checkTaskStatus(taskId, apiKey, modelConfig) {
+async function checkTaskStatus(pollTarget, apiKey) {
   if (!apiKey) throw new Error("API key is required for polling");
-  const url = modelConfig ? modelConfig.statusUrl(taskId) : `${API_BASE}/v1/ai/image-to-video/kling-v2-6/${taskId}`;
-  const response = await makeFreepikRequest('GET', url, apiKey);
+  if (!pollTarget) throw new Error("pollUrl/runId is required for polling");
+  let url;
+  if (/^https?:\/\//i.test(pollTarget)) {
+    url = pollTarget;
+  } else if (pollTarget.startsWith('/')) {
+    url = `${FLORA_BASE}${pollTarget}`;
+  } else {
+    url = `${FLORA_BASE}/api/v1/runs/${pollTarget}`;
+  }
+  const response = await makeFloraRequest('GET', url, apiKey);
   return response.data;
 }
 
-function waitForWebhook(taskId, timeoutMs = 25 * 60 * 1000) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pendingTasks.delete(taskId);
-      resolve(null);
-    }, timeoutMs);
-
-    pendingTasks.set(taskId, {
-      resolve: (result) => {
-        clearTimeout(timer);
-        resolve(result);
-      }
-    });
-
-    console.log(`[WEBHOOK] Waiting for task ${taskId} (timeout ${timeoutMs / 1000}s)`);
-  });
-}
-
-async function pollForResult(chatId, taskId, apiKey, modelConfig) {
-  const useWebhook = PUBLIC_DOMAIN && pendingTasks.has(taskId);
+// Flora is poll-only (no delivered webhooks). We poll the run's pollUrl until
+// the status becomes completed/failed, or we hit the max wait window.
+async function pollForResult(chatId, pollTarget, apiKey) {
   const maxWaitMs = 25 * 60 * 1000;
-  const pollInterval = useWebhook ? 30000 : 15000;
+  const pollInterval = 15000;
   const maxAttempts = Math.ceil(maxWaitMs / pollInterval);
   let consecutiveErrors = 0;
   let totalWaitMs = 0;
 
-  console.log(`[freepik] Poll mode: ${useWebhook ? 'webhook + backup poll (30s)' : 'poll only (15s)'}`);
+  console.log(`[flora] Poll mode: poll only (15s), target=${pollTarget}`);
 
   for (let i = 0; i < maxAttempts; i++) {
     const intervalMs = pollInterval + Math.floor(Math.random() * 1000);
-
-    if (useWebhook) {
-      const webhookResult = await Promise.race([
-        new Promise((resolve) => {
-          const existing = pendingTasks.get(taskId);
-          if (!existing) resolve(null);
-          else {
-            const origResolve = existing.resolve;
-            existing.resolve = (result) => {
-              origResolve(result);
-              resolve(result);
-            };
-          }
-        }),
-        new Promise((resolve) => setTimeout(() => resolve('TIMEOUT'), intervalMs))
-      ]);
-
-      totalWaitMs += intervalMs;
-
-      if (webhookResult && webhookResult !== 'TIMEOUT') {
-        console.log(`[WEBHOOK] Got result for task ${taskId} via webhook! (${Math.round(totalWaitMs / 1000)}s)`);
-        return webhookResult;
-      }
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      totalWaitMs += intervalMs;
-    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    totalWaitMs += intervalMs;
 
     try {
-      const rawResult = await checkTaskStatus(taskId, apiKey, modelConfig);
+      const rawResult = await checkTaskStatus(pollTarget, apiKey);
       const result = rawResult?.data || rawResult;
-      const status = (result?.status || "").toUpperCase();
-      console.log(`[freepik] Poll #${i + 1} task ${taskId}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
+      const status = (result?.status || "").toLowerCase();
+      console.log(`[flora] Poll #${i + 1}: status=${status} (${Math.round(totalWaitMs / 1000)}s)`);
       consecutiveErrors = 0;
 
-      if (status === "COMPLETED") {
-        console.log("[freepik] Task completed! Full response:", JSON.stringify(rawResult));
-        pendingTasks.delete(taskId);
+      if (status === "completed" || status === "succeeded" || status === "success") {
+        console.log("[flora] Task completed! Full response:", JSON.stringify(rawResult));
         return result;
-      } else if (status === "FAILED" || status === "ERROR") {
-        console.log("[freepik] Task failed! Full response:", JSON.stringify(rawResult));
-        pendingTasks.delete(taskId);
+      } else if (status === "failed" || status === "error" || status === "cancelled" || status === "canceled") {
+        console.log("[flora] Task failed! Full response:", JSON.stringify(rawResult));
         return result;
       }
 
@@ -1581,17 +1362,16 @@ async function pollForResult(chatId, taskId, apiKey, modelConfig) {
         bot.sendMessage(chatId, `Masih memproses... (${elapsed} detik)`);
       }
     } catch (err) {
-      console.error(`[freepik] Poll #${i + 1} error:`, err.response?.status, err.response?.data || err.message);
+      console.error(`[flora] Poll #${i + 1} error:`, err.response?.status, err.response?.data || err.message);
       consecutiveErrors++;
 
       if (consecutiveErrors >= 5) {
-        console.log("[freepik] 5 consecutive poll errors, continuing...");
+        console.log("[flora] 5 consecutive poll errors, continuing...");
         consecutiveErrors = 0;
       }
     }
   }
 
-  pendingTasks.delete(taskId);
   return null;
 }
 
@@ -1765,32 +1545,28 @@ async function runGenerate(chatId, msg, session, modelConfig) {
     const submitStart = Date.now();
     const submitResult = await submitVideo(session, modelConfig);
     const submitTime = ((Date.now() - submitStart) / 1000).toFixed(1);
-    console.log("[freepik] Full submit response:", JSON.stringify(submitResult));
-    const taskId = submitResult?.data?.task_id || submitResult?.task_id || submitResult?.id;
+    console.log("[flora] Full submit response:", JSON.stringify(submitResult));
+    const runId = submitResult?.runId || submitResult?.id || submitResult?.data?.runId;
+    const pollUrl = submitResult?.pollUrl || submitResult?.data?.pollUrl || runId;
 
-    if (!taskId) {
-      console.error("[freepik] No task_id in response:", JSON.stringify(submitResult));
+    if (!pollUrl) {
+      console.error("[flora] No runId/pollUrl in response:", JSON.stringify(submitResult));
       bot.sendMessage(chatId, "Gagal submit task. Response tidak valid dari API.");
       if (session.apiKey) unlockKey(session.apiKey);
       session.isGenerating = false;
       return;
     }
 
-    console.log(`[freepik] Job ${taskId} submitted in ${submitTime}s`);
+    console.log(`[flora] Job ${runId} submitted in ${submitTime}s (pollUrl=${pollUrl})`);
     setCooldown(session.userId);
     incrementDailyUsage(session.userId);
     const remaining = getDailyRemaining(session.userId);
-    const webhookActive = !!PUBLIC_DOMAIN;
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${taskId}\nCooldown: 5 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\nMode: ${webhookActive ? 'Webhook + Polling' : 'Polling'}\n\nMenunggu hasil...`);
-
-    if (webhookActive) {
-      waitForWebhook(taskId);
-    }
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${runId || pollUrl}\nCooldown: 5 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
-    const result = await pollForResult(chatId, taskId, session.apiKey, modelConfig);
+    const result = await pollForResult(chatId, pollUrl, session.apiKey);
     const pollTime = ((Date.now() - pollStart) / 1000).toFixed(1);
-    console.log(`[freepik] Job ${taskId} polling finished in ${pollTime}s`);
+    console.log(`[flora] Job ${runId} polling finished in ${pollTime}s`);
 
     if (!result) {
       bot.sendMessage(chatId, "Timeout: Video belum selesai setelah 20 menit. Coba lagi nanti.");
@@ -1799,18 +1575,17 @@ async function runGenerate(chatId, msg, session, modelConfig) {
       return;
     }
 
-    const jobStatus = (result?.status || "").toUpperCase();
+    const jobStatus = (result?.status || "").toLowerCase();
 
-    if (jobStatus === "COMPLETED") {
-      console.log("[freepik] Full completed result:", JSON.stringify(result));
+    if (jobStatus === "completed" || jobStatus === "succeeded" || jobStatus === "success") {
+      console.log("[flora] Full completed result:", JSON.stringify(result));
 
+      // Flora returns outputs: [{ type, url }]. Prefer these; fall back to a deep scan.
       function extractUrls(obj) {
         const urls = [];
         if (!obj) return urls;
         if (typeof obj === "string") {
-          if (obj.startsWith("http") && (obj.includes(".mp4") || obj.includes("video") || obj.includes("generated") || obj.includes("freepik"))) {
-            urls.push(obj);
-          }
+          if (obj.startsWith("http")) urls.push(obj);
           return urls;
         }
         if (Array.isArray(obj)) {
@@ -1818,7 +1593,7 @@ async function runGenerate(chatId, msg, session, modelConfig) {
           return urls;
         }
         if (typeof obj === "object") {
-          const directKeys = ["url", "video_url", "video", "download_url", "src", "generated"];
+          const directKeys = ["url", "video_url", "video", "download_url", "src", "output", "outputs"];
           for (const key of directKeys) {
             if (obj[key]) urls.push(...extractUrls(obj[key]));
           }
@@ -1831,28 +1606,34 @@ async function runGenerate(chatId, msg, session, modelConfig) {
         return urls;
       }
 
-      const videoUrls = extractUrls(result);
-      console.log("[freepik] All extracted URLs from result:", videoUrls);
+      let videoUrls = [];
+      if (Array.isArray(result.outputs)) {
+        videoUrls = result.outputs.map(o => (typeof o === 'string' ? o : o?.url)).filter(Boolean);
+      }
+      if (videoUrls.length === 0) {
+        videoUrls = extractUrls(result);
+      }
+      console.log("[flora] All extracted URLs from result:", videoUrls);
 
       const uniqueUrls = [...new Set(videoUrls)];
-      console.log("[freepik] Extracted video URLs:", uniqueUrls);
+      console.log("[flora] Extracted video URLs:", uniqueUrls);
 
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
           const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}\n\n🔗 Download/tonton di sini:\n${videoUrl}`;
           try {
             await bot.sendMessage(chatId, videoCaption, { disable_web_page_preview: false });
-            console.log("[freepik] Video link sent to user");
+            console.log("[flora] Video link sent to user");
           } catch (msgErr) {
-            console.error("[freepik] sendMessage link failed:", msgErr.message);
+            console.error("[flora] sendMessage link failed:", msgErr.message);
           }
         }
       } else {
-        console.log("[freepik] No video URLs found. Full response:", JSON.stringify(result));
+        console.log("[flora] No video URLs found. Full response:", JSON.stringify(result));
         bot.sendMessage(chatId, `Video selesai tapi URL tidak ditemukan.\n\nDebug: ${JSON.stringify(result).substring(0, 500)}`);
       }
     } else {
-      const errDetail = result?.error || result?.message || JSON.stringify(result);
+      const errDetail = result?.errorCode || result?.error || result?.message || JSON.stringify(result);
       bot.sendMessage(chatId, `Generate gagal. Status: ${jobStatus}\n\nDetail: ${errDetail}`);
     }
 
@@ -1861,16 +1642,9 @@ async function runGenerate(chatId, msg, session, modelConfig) {
   } catch (err) {
     const errStatus = err.response?.status || 'N/A';
     const errBody = err.response?.data ? JSON.stringify(err.response.data).substring(0, 500) : 'N/A';
-    console.error(`[freepik] Generate error: status=${errStatus} message=${err.message} body=${errBody}`);
-    if (err.message === 'DAILY_LIMIT_MODEL') {
-      bot.sendMessage(chatId,
-        `⚠️ Model ini sudah mencapai batas harian (daily limit).\n\nSilakan ganti model lain dengan mengetik /generate dan pilih model yang berbeda.`,
-        { reply_markup: { inline_keyboard: getModelKeyboard() } }
-      );
-    } else {
-      const errorMsg = err.response?.data?.message || err.response?.data?.detail || err.response?.data?.error || err.message || 'Unknown error';
-      bot.sendMessage(chatId, `Error: ${errorMsg}`);
-    }
+    console.error(`[flora] Generate error: status=${errStatus} message=${err.message} body=${errBody}`);
+    const errorMsg = err.response?.data?.message || err.response?.data?.detail || err.response?.data?.error || err.message || 'Unknown error';
+    bot.sendMessage(chatId, `Error: ${errorMsg}`);
     if (session.apiKey) unlockKey(session.apiKey);
     session.isGenerating = false;
   }
@@ -1880,7 +1654,7 @@ bot.on("polling_error", (err) => {
   console.error("Polling error:", err.code, err.message);
 });
 
-console.log("Bot Telegram AI Video Generator (Freepik API) sudah berjalan!");
+console.log("Bot Telegram AI Video Generator (Flora AI - Kling 2.6 Pro Motion Control) sudah berjalan!");
 console.log(`Model tersedia: ${Object.keys(MODELS).join(", ")}`);
 console.log(`Admin IDs: ${ADMIN_IDS.length > 0 ? ADMIN_IDS.join(", ") : "(tidak diset - /addkeys dan /poolstatus tidak bisa diakses)"}`);
 console.log(`Keys per user: ${KEYS_PER_USER}`);
