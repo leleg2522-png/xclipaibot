@@ -91,28 +91,10 @@ function getModelKeyboard() {
 }
 
 function initProxy() {
-  const bulkVar = process.env.VPS_PROXIES || process.env.PROXY_LIST;
-  if (bulkVar) {
-    bulkVar.split(/[,\n]/).map(e => e.trim()).filter(Boolean).forEach(entry => {
-      const parts = entry.split(':');
-      if (parts.length >= 4) {
-        VPS_PROXIES.push({
-          host: parts[0],
-          port: parseInt(parts[1]),
-          username: parts[2],
-          password: parts[3],
-        });
-      } else if (parts.length >= 2) {
-        VPS_PROXIES.push({
-          host: parts[0],
-          port: parseInt(parts[1]),
-          username: parts[2] || null,
-          password: parts[3] || null,
-        });
-      }
-    });
-  }
-  console.log(`Proxy initialized: ${VPS_PROXIES.length} proxy(s)`);
+  // Proxy (Decodo/VPS) DINONAKTIFKAN. Koneksi ke Flora selalu langsung (direct).
+  // VPS_PROXIES / PROXY_LIST sengaja diabaikan di semua environment.
+  VPS_PROXIES = [];
+  console.log("Proxy dinonaktifkan - koneksi Flora langsung (direct)");
 }
 
 initProxy();
