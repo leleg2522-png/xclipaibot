@@ -10,6 +10,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "overrides": {
+    "form-data": "^4.0.5"
+  },
   "dependencies": {
     "@types/node": "^22.19.17",
     "axios": "^1.15.0",
