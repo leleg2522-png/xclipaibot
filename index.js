@@ -394,6 +394,28 @@ async function replaceDeadKey(userId, deadKey) {
   }
 }
 
+// --- Rotasi pool bersama (key TIDAK di-assign permanen ke user) ---
+let globalRotation = 0;
+
+async function getPoolKeys() {
+  if (!db) return [];
+  const result = await db.query(
+    "SELECT api_key FROM api_key_pool ORDER BY created_at ASC"
+  );
+  return result.rows.map(r => r.api_key);
+}
+
+async function deleteDeadKey(deadKey) {
+  if (!db) return;
+  try {
+    await db.query("DELETE FROM api_key_pool WHERE api_key = $1", [deadKey]);
+    await db.query("DELETE FROM user_api_keys WHERE api_key = $1", [deadKey]);
+    console.log(`[pool] Key ...${deadKey.slice(-6)} dihapus permanen (mati)`);
+  } catch (err) {
+    console.error("[pool] deleteDeadKey error:", err.message);
+  }
+}
+
 function isAdmin(msg) {
   return ADMIN_IDS.includes(String(msg.from.id));
 }
@@ -979,19 +1001,20 @@ bot.onText(/\/poolstatus/, async (msg) => {
   }
   try {
     const total = await db.query("SELECT COUNT(*) as count FROM api_key_pool");
-    const available = await db.query("SELECT COUNT(*) as count FROM api_key_pool WHERE status = 'available'");
-    const assigned = await db.query("SELECT COUNT(*) as count FROM api_key_pool WHERE status = 'assigned'");
-    const users = await db.query("SELECT COUNT(DISTINCT user_id) as count FROM user_api_keys");
+    const totalKeys = parseInt(total.rows[0].count, 10);
+    const inUse = lockedKeys.size;
+    const onCooldown = Object.values(keyFailures).filter(f => f.until > Date.now()).length;
+    const idle = Math.max(0, totalKeys - inUse - onCooldown);
 
     bot.sendMessage(chatId,
-      `📊 Pool Status:\n\n` +
-      `Total key: ${total.rows[0].count}\n` +
-      `Tersedia: ${available.rows[0].count}\n` +
-      `Terpakai: ${assigned.rows[0].count}\n` +
-      `User dengan key: ${users.rows[0].count}\n` +
-      `Key per user: ${KEYS_PER_USER}\n` +
-      `Kapasitas user: ${Math.floor(available.rows[0].count / KEYS_PER_USER)} user lagi\n\n` +
-      `ℹ️ Key mati langsung dihapus otomatis`
+      `📊 Pool Status (mode rotasi):\n\n` +
+      `Total key: ${totalKeys}\n` +
+      `Sedang dipakai: ${inUse}\n` +
+      `Cooldown (rate limit): ${onCooldown}\n` +
+      `Siap dipakai: ${idle}\n\n` +
+      `ℹ️ Key dirotasi bergiliran, tidak nempel ke user.\n` +
+      `ℹ️ Key mati langsung dihapus otomatis.\n` +
+      `ℹ️ Maks generate berbarengan = jumlah key.`
     );
   } catch (err) {
     console.error("Pool status error:", err.message);
@@ -1265,36 +1288,46 @@ async function submitVideo(session, modelConfig) {
   console.log(`[flora] params:`, JSON.stringify(params));
   console.log(`[flora] Request body:`, JSON.stringify(body));
 
-  const userKeys = await assignKeysToUser(session.userId);
-  if (userKeys.length === 0) {
+  const poolKeys = await getPoolKeys();
+  if (poolKeys.length === 0) {
     throw new Error("Tidak ada API key tersedia. Hubungi admin.");
   }
 
-  console.log(`[flora] User ${session.userId} has ${userKeys.length} keys`);
+  console.log(`[flora] Pool punya ${poolKeys.length} key (mode rotasi)`);
 
-  const userRoundRobin = userKeyRotation.get(session.userId) || 0;
-  const rotatedKeys = [...userKeys.slice(userRoundRobin % userKeys.length), ...userKeys.slice(0, userRoundRobin % userKeys.length)];
-  userKeyRotation.set(session.userId, userRoundRobin + 1);
+  // Rotasi global round-robin: mulai dari posisi berbeda tiap generate.
+  const start = globalRotation % poolKeys.length;
+  globalRotation = (globalRotation + 1) % Number.MAX_SAFE_INTEGER;
+  const rotatedKeys = [...poolKeys.slice(start), ...poolKeys.slice(0, start)];
 
   let lastError = null;
   const triedKeys = new Set();
   const queue = [...rotatedKeys];
-  const MAX_RETRIES = 10;
+  const MAX_RETRIES = Math.min(poolKeys.length, 20);
   let attempts = 0;
+  let skippedBusy = false;
 
   while (queue.length > 0 && attempts < MAX_RETRIES) {
     const apiKey = queue.shift();
     if (triedKeys.has(apiKey)) continue;
     triedKeys.add(apiKey);
-    attempts++;
 
     const now = Date.now();
     const failure = keyFailures[apiKey];
     if (failure && failure.until > now) {
       console.log(`[flora] Key ...${apiKey.slice(-6)} on cooldown, skipping`);
+      skippedBusy = true;
       continue;
     }
 
+    // Key sedang dipakai generate lain -> lewati, jangan bentrok.
+    if (lockedKeys.has(apiKey)) {
+      console.log(`[flora] Key ...${apiKey.slice(-6)} sedang dipakai, skipping`);
+      skippedBusy = true;
+      continue;
+    }
+
+    attempts++;
     console.log(`[flora] Attempt ${attempts}/${MAX_RETRIES} using key ...${apiKey.slice(-6)}`);
 
     try {
@@ -1315,21 +1348,20 @@ async function submitVideo(session, modelConfig) {
 
       console.log(`[flora] Submit error: ${status} - ${errCode || ''} ${msg}`);
 
-      // 401 unauthorized/invalid_api_key, 402 insufficient_credits, 403 forbidden -> key dead, replace it.
-      // 429 rate limited -> quota habis, replace/rotate.
-      if (status === 429 || status === 401 || status === 402 || status === 403) {
+      // 401 unauthorized/invalid, 402 kredit habis, 403 forbidden -> key mati, hapus dari pool.
+      if (status === 401 || status === 402 || status === 403) {
         const reason = status === 402 ? 'kredit habis'
-                     : status === 429 ? 'rate limited'
                      : status === 401 ? 'invalid/unauthorized'
                      : 'forbidden';
-        console.log(`[flora] Key ...${apiKey.slice(-6)} ${reason}, replacing...`);
-        const newKey = await replaceDeadKey(session.userId, apiKey);
-        if (newKey && !triedKeys.has(newKey)) {
-          console.log(`[flora] Got replacement key ...${newKey.slice(-6)}, will retry`);
-          queue.push(newKey);
-        } else if (!newKey) {
-          console.log(`[flora] No replacement key available in pool`);
-        }
+        console.log(`[flora] Key ...${apiKey.slice(-6)} ${reason}, dihapus dari pool`);
+        await deleteDeadKey(apiKey);
+        continue;
+      }
+
+      // 429 rate limited -> key masih hidup, cooldown sebentar lalu coba key lain.
+      if (status === 429) {
+        console.log(`[flora] Key ...${apiKey.slice(-6)} rate limited, cooldown 60s`);
+        markKeyFailed(apiKey, 60000);
         continue;
       }
 
@@ -1341,6 +1373,9 @@ async function submitVideo(session, modelConfig) {
     console.log(`[flora] Hit max retries (${MAX_RETRIES})`);
   }
   if (lastError) throw lastError;
+  if (skippedBusy) {
+    throw new Error("Semua API key sedang dipakai. Coba lagi beberapa menit lagi ya.");
+  }
   throw new Error("Semua API key tidak tersedia. Coba lagi nanti.");
 }
 
