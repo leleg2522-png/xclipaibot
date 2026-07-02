@@ -1653,12 +1653,21 @@ async function runGenerate(chatId, msg, session, modelConfig) {
 
       if (uniqueUrls.length > 0) {
         for (const videoUrl of uniqueUrls) {
-          const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}\n\n🔗 Download/tonton di sini:\n${videoUrl}`;
+          const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`;
+          const linkCaption = `${videoCaption}\n\n🔗 Download/tonton di sini:\n${videoUrl}`;
+          // Kirim file video langsung supaya bisa diputar di chat. Kalau gagal
+          // (mis. file kegedean / Telegram tak bisa fetch URL), fallback ke link.
           try {
-            await bot.sendMessage(chatId, videoCaption, { disable_web_page_preview: false });
-            console.log("[flora] Video link sent to user");
-          } catch (msgErr) {
-            console.error("[flora] sendMessage link failed:", msgErr.message);
+            await bot.sendVideo(chatId, videoUrl, { caption: videoCaption });
+            console.log("[flora] Video file sent to user");
+          } catch (videoErr) {
+            console.error("[flora] sendVideo failed, fallback to link:", videoErr.message);
+            try {
+              await bot.sendMessage(chatId, linkCaption, { disable_web_page_preview: false });
+              console.log("[flora] Video link sent to user (fallback)");
+            } catch (msgErr) {
+              console.error("[flora] sendMessage link failed:", msgErr.message);
+            }
           }
         }
       } else {
