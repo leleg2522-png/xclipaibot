@@ -530,10 +530,10 @@ const KLIKQRIS_MERCHANT_ID = process.env.KLIKQRIS_MERCHANT_ID;
 const KLIKQRIS_BASE = "https://klikqris.com/api/qrisv2";
 // Paket top-up: nominal Rupiah -> jumlah video (saldo). Ubah sesuka hati.
 const TOPUP_PACKAGES = [
-  { amount: 15000, videos: 20 },
-  { amount: 30000, videos: 45 },
-  { amount: 50000, videos: 80 },
-  { amount: 100000, videos: 175 },
+  { amount: 10000, videos: 5 },
+  { amount: 20000, videos: 10 },
+  { amount: 50000, videos: 25 },
+  { amount: 100000, videos: 50 },
 ];
 const userCooldowns = new Map();
 const userKeyRotation = new Map();
