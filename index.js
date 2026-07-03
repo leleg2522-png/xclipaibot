@@ -530,7 +530,6 @@ const KLIKQRIS_MERCHANT_ID = process.env.KLIKQRIS_MERCHANT_ID;
 const KLIKQRIS_BASE = "https://klikqris.com/api/qrisv2";
 // Top-up bebas: 1 video = PRICE_PER_VIDEO rupiah. User pilih/ketik jumlah video.
 const PRICE_PER_VIDEO = 2000;
-const TOPUP_QUICK_PICKS = [1, 5, 10, 25, 50];
 const TOPUP_MIN_VIDEOS = 1;
 const TOPUP_MAX_VIDEOS = 500;
 const userCooldowns = new Map();
@@ -1047,6 +1046,7 @@ function resetSession(msg, fullReset = false) {
     session.prompt = null;
     session.duration = "5";
     session.awaitingPrompt = false;
+    session.awaitingTopupQty = false;
     session.orientation = "video";
     session.motionStrength = 0.5;
     session.selectedModel = "kling-2-6-pro-mc";
@@ -1202,17 +1202,12 @@ bot.onText(/\/topup(?:@\w+)?(?:\s+(\d+))?$/, async (msg, match) => {
     await createTopupOrder(chatId, msg.from, qty);
     return;
   }
-  const rows = [];
-  for (let i = 0; i < TOPUP_QUICK_PICKS.length; i += 3) {
-    rows.push(TOPUP_QUICK_PICKS.slice(i, i + 3).map((v) => ({
-      text: `${v} video · Rp${(v * PRICE_PER_VIDEO).toLocaleString("id-ID")}`,
-      callback_data: `topupqty:${v}`,
-    })));
-  }
+  const session = getSession(msg);
+  session.awaitingTopupQty = true;
   bot.sendMessage(
     chatId,
-    `💳 *Top-up Saldo*\n\nHarga: *Rp${PRICE_PER_VIDEO.toLocaleString("id-ID")} / video*.\n\nPilih jumlah di bawah, atau ketik jumlah bebas dengan:\n\`/topup <jumlah>\`  (contoh: /topup 7)\n\nSetelah bayar via QRIS, saldo otomatis bertambah.`,
-    { parse_mode: "Markdown", reply_markup: { inline_keyboard: rows } }
+    `💳 *Top-up Saldo*\n\nHarga: *Rp${PRICE_PER_VIDEO.toLocaleString("id-ID")} / video*.\n\nKetik *jumlah video* yang mau kamu beli (angka saja), contoh: 5\n\nNanti kamu dapat QRIS. Setelah bayar, saldo bertambah otomatis.\n\n(Batas ${TOPUP_MIN_VIDEOS}–${TOPUP_MAX_VIDEOS} video sekali top-up.)`,
+    { parse_mode: "Markdown" }
   );
 });
 
@@ -1270,6 +1265,17 @@ bot.on("text", async (msg) => {
   if (msg.text && msg.text.startsWith("/")) return;
   const chatId = msg.chat.id;
   const session = getSession(msg);
+
+  if (session.awaitingTopupQty) {
+    session.awaitingTopupQty = false;
+    const t = (msg.text || "").trim();
+    if (/^\d+$/.test(t)) {
+      await createTopupOrder(chatId, msg.from, parseInt(t, 10));
+    } else {
+      bot.sendMessage(chatId, "Top-up dibatalkan (harus berupa angka). Ketik /topup lagi ya.");
+    }
+    return;
+  }
 
   if (session.awaitingPrompt) {
     session.prompt = msg.text.trim();
