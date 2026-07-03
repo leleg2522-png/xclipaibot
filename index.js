@@ -53,6 +53,24 @@ if (RAILWAY_DB_URL) {
       ]);
     })
     .then(() => console.log("user_api_keys table ready"))
+    .then(() => db.query(`
+        CREATE TABLE IF NOT EXISTS xclipaibot_users (
+          telegram_id BIGINT PRIMARY KEY,
+          username TEXT,
+          first_name TEXT,
+          balance INTEGER NOT NULL DEFAULT 0,
+          linked_user_id BIGINT,
+          converted BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        )
+      `))
+    .then(() => console.log("xclipaibot_users table ready"))
+    .then(() => db.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS xclipaibot_users_linked_user_id_uidx
+        ON xclipaibot_users (linked_user_id) WHERE linked_user_id IS NOT NULL
+      `))
+    .then(() => console.log("xclipaibot_users linked_user_id unique index ready"))
     .catch((err) => console.error("Database connection error:", err.message));
 } else {
   console.warn("RAILWAY_DATABASE_URL not set - login feature disabled");
@@ -452,9 +470,9 @@ function getPublicFileUrl(filename) {
 }
 
 const COOLDOWN_MS = 3 * 60 * 1000;
-const DAILY_LIMIT = 20;
+// Konversi langganan lama -> saldo (dipakai oleh /link). Ubah angka ini sesuka hati.
+const CONVERSION_CREDITS = 100;
 const userCooldowns = new Map();
-const userDailyUsage = new Map();
 const userKeyRotation = new Map();
 
 // Global submission queue — staggers Flora API calls across users
@@ -491,31 +509,6 @@ async function drainSubmitQueue() {
   submitQueueBusy = false;
 }
 
-function getTodayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function getDailyUsage(userId) {
-  const entry = userDailyUsage.get(userId);
-  const today = getTodayKey();
-  if (!entry || entry.date !== today) return 0;
-  return entry.count;
-}
-
-function incrementDailyUsage(userId) {
-  const today = getTodayKey();
-  const entry = userDailyUsage.get(userId);
-  if (!entry || entry.date !== today) {
-    userDailyUsage.set(userId, { date: today, count: 1 });
-  } else {
-    entry.count++;
-  }
-}
-
-function getDailyRemaining(userId) {
-  return Math.max(0, DAILY_LIMIT - getDailyUsage(userId));
-}
-
 function getCooldownRemaining(userId) {
   const lastUsed = userCooldowns.get(userId);
   if (!lastUsed) return 0;
@@ -525,6 +518,68 @@ function getCooldownRemaining(userId) {
 
 function setCooldown(userId) {
   userCooldowns.set(userId, Date.now());
+}
+
+// --- Sistem saldo (per Telegram ID), disimpan di tabel xclipaibot_users ---
+// Identitas user = Telegram ID; tidak ada login. Saldo bertahan lintas restart.
+async function ensureUser(telegramId, username, firstName) {
+  if (!db || !telegramId) return null;
+  try {
+    const res = await db.query(
+      `INSERT INTO xclipaibot_users (telegram_id, username, first_name)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (telegram_id) DO UPDATE
+         SET username = COALESCE(EXCLUDED.username, xclipaibot_users.username),
+             first_name = COALESCE(EXCLUDED.first_name, xclipaibot_users.first_name),
+             updated_at = NOW()
+       RETURNING *`,
+      [telegramId, username || null, firstName || null]
+    );
+    return res.rows[0];
+  } catch (err) {
+    console.error("[saldo] ensureUser error:", err.message);
+    return null;
+  }
+}
+
+async function getBalance(telegramId) {
+  if (!db || !telegramId) return 0;
+  try {
+    const res = await db.query(
+      "SELECT balance FROM xclipaibot_users WHERE telegram_id = $1",
+      [telegramId]
+    );
+    return res.rows.length ? res.rows[0].balance : 0;
+  } catch (err) {
+    console.error("[saldo] getBalance error:", err.message);
+    return 0;
+  }
+}
+
+async function addBalance(telegramId, amount) {
+  if (!db || !telegramId) return null;
+  const res = await db.query(
+    `INSERT INTO xclipaibot_users (telegram_id, balance)
+     VALUES ($1, $2)
+     ON CONFLICT (telegram_id) DO UPDATE
+       SET balance = xclipaibot_users.balance + $2, updated_at = NOW()
+     RETURNING balance`,
+    [telegramId, amount]
+  );
+  return res.rows[0].balance;
+}
+
+// Pengurangan atomik: hanya berhasil kalau saldo cukup. Return saldo baru, atau
+// null kalau saldo tidak cukup (aman dari generate paralel/race).
+async function deductBalance(telegramId, amount = 1) {
+  if (!db || !telegramId) return null;
+  const res = await db.query(
+    `UPDATE xclipaibot_users SET balance = balance - $2, updated_at = NOW()
+     WHERE telegram_id = $1 AND balance >= $2
+     RETURNING balance`,
+    [telegramId, amount]
+  );
+  return res.rows.length ? res.rows[0].balance : null;
 }
 
 async function downloadTelegramFile(fileId) {
@@ -609,11 +664,7 @@ function getSession(msg) {
       orientation: "video",
       quality: "std",
       isGenerating: false,
-      loggedIn: false,
-      userId: null,
-      username: null,
-      loginStep: null,
-      loginEmail: null,
+      selectedModel: "kling-2-6-pro-mc",
     };
   }
   return userSessions[key];
@@ -703,139 +754,145 @@ function resetSession(msg, fullReset = false) {
     session.awaitingPrompt = false;
     session.orientation = "video";
     session.motionStrength = 0.5;
-    session.selectedModel = null;
+    session.selectedModel = "kling-2-6-pro-mc";
     session.isGenerating = false;
-    session.loginStep = null;
-    session.loginEmail = null;
   }
 }
 
-bot.onText(/\/start/, (msg) => {
-  const session = getSession(msg);
-  const wasLoggedIn = session.loggedIn;
-  const savedUsername = session.username;
-  const savedUserId = session.userId;
-  resetSession(msg);
-  if (wasLoggedIn) {
-    const s = getSession(msg);
-    s.loggedIn = true;
-    s.username = savedUsername;
-    s.userId = savedUserId;
+// Identitas otomatis: setiap pesan me-refresh data user (nama/@username) dan
+// membuat baris saldo (default 0) bila belum ada. Tidak perlu login.
+bot.on("message", (msg) => {
+  if (msg.from && !msg.from.is_bot) {
+    ensureUser(msg.from.id, msg.from.username, msg.from.first_name).catch(() => {});
   }
+});
+
+bot.onText(/\/start/, async (msg) => {
+  resetSession(msg);
+  await ensureUser(msg.from.id, msg.from.username, msg.from.first_name);
+  const balance = await getBalance(msg.from.id);
   bot.sendMessage(
     msg.chat.id,
 `🎬 AI Video Generator Bot
 
-Bot ini menghasilkan video menggunakan model 🔥 Kling MC V3 PRO.
+Bot ini menghasilkan video pakai model 🔥 Kling MC V3 PRO (foto karakter + video referensi gerakan).
 
-🎥 Motion Control (foto karakter + video referensi gerakan):
-🔥 Kling MC V3 PRO
+💳 Saldo kamu: ${balance} video
+1 video = 1 saldo (dipotong HANYA kalau video berhasil).
 
 Cara pakai:
-1️⃣ /login → pilih model
-2️⃣ Kirim foto karakter + video referensi gerakan
+1️⃣ Kirim foto karakter
+2️⃣ Kirim video referensi gerakan
 3️⃣ /generate → langsung proses
 
 Perintah:
 /start - Mulai ulang
-/login - Login dengan email/username xclip
-/logout - Logout
+/saldo - Cek sisa saldo
 /generate - Generate video
 /prompt [teks] - Set prompt tambahan
-/status - Cek status session saat ini
-/reset - Reset session
+/link email password - Klaim saldo dari langganan lama (sekali saja)
+/status - Cek status
+/reset - Reset foto/video
 
 Catatan:
-• Harus login dan punya langganan bulanan aktif
-• Foto: min 300x300px, max 10MB (JPG/PNG/WEBP)
-• Video: durasi 3-30 detik, max 100MB (MP4/MOV/WEBM)`
+• Butuh saldo untuk generate. Habis? /topup (segera hadir) atau hubungi admin.
+• Foto: JPG/PNG/WEBP. Video: MP4/MOV/WEBM (max 20MB).`
   );
 });
 
-bot.onText(/\/login(.*)/, async (msg, match) => {
+bot.onText(/\/saldo/, async (msg) => {
   const chatId = msg.chat.id;
-  console.log(`/login command received from chat ${chatId}`);
-  const session = getSession(msg);
-
-  if (session.loggedIn) {
-    bot.sendMessage(chatId, `Kamu sudah login sebagai ${session.username}. Ketik /logout untuk keluar.`);
-    return;
+  await ensureUser(msg.from.id, msg.from.username, msg.from.first_name);
+  const bal = await getBalance(msg.from.id);
+  let text = `💳 Saldo kamu: ${bal} video\n\n1 video = 1 saldo (dipotong hanya kalau video berhasil).`;
+  if (bal <= 0) {
+    text += `\n\n⚠️ Saldo habis. Isi lewat /topup (segera hadir) atau hubungi admin.`;
   }
-
-  const input = (match[1] || "").trim();
-
-  if (input) {
-    const args = input.split(/\s+/);
-    if (args.length >= 2) {
-      const [loginInput, password] = args;
-      try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
-      await processLogin(chatId, msg, session, loginInput, password);
-      return;
-    }
-  }
-
-  session.loginStep = "email";
-  session.loginEmail = null;
-  bot.sendMessage(chatId, "Masukkan email atau username kamu:");
+  bot.sendMessage(chatId, text);
 });
 
-async function processLogin(chatId, msg, session, loginInput, password) {
-  try {
-    console.log(`Attempting login for: ${loginInput}`);
-    const authResult = await authenticateUser(loginInput, password);
-    console.log(`Auth result: success=${authResult.success}`);
-
-    if (!authResult.success) {
-      bot.sendMessage(chatId, "Login gagal: Email/username atau password salah.");
-      session.loginStep = null;
-      session.loginEmail = null;
-      return;
-    }
-
-    const subResult = await checkSubscription(authResult.userId);
-
-    if (!subResult.active) {
-      session.loginStep = null;
-      session.loginEmail = null;
-      bot.sendMessage(chatId, `Login ditolak.\n\n⚠️ ${subResult.reason}`);
-      return;
-    }
-
-    session.loggedIn = true;
-    session.userId = authResult.userId;
-    session.username = authResult.username;
-    session.loginStep = null;
-    session.loginEmail = null;
-
-    const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
-      day: "numeric", month: "long", year: "numeric",
-    });
-
-    bot.sendMessage(
-      chatId,
-      `✅ Login berhasil! Selamat datang, ${authResult.username}.\n\nLangganan: ${subResult.planName} (Aktif)\nBerlaku sampai: ${expDate}\n\nPilih model AI yang ingin kamu gunakan:`,
-      { reply_markup: { inline_keyboard: getModelKeyboard() } }
-    );
-  } catch (err) {
-    console.error("Login error:", err);
-    bot.sendMessage(chatId, "Terjadi kesalahan saat login. Coba lagi nanti.");
-    session.loginStep = null;
-    session.loginEmail = null;
-  }
-}
-
-bot.onText(/\/logout/, (msg) => {
+// Migrasi user lama: klaim saldo dari langganan yang masih aktif, SEKALI saja.
+bot.onText(/\/link(.*)/, async (msg, match) => {
   const chatId = msg.chat.id;
-  const session = getSession(msg);
+  const telegramId = msg.from.id;
+  const args = (match[1] || "").trim().split(/\s+/).filter(Boolean);
 
-  if (!session.loggedIn) {
-    bot.sendMessage(chatId, "Kamu belum login.");
+  if (args.length < 2) {
+    bot.sendMessage(chatId, "Format: /link email password\n\nUntuk klaim saldo dari langganan lama kamu (sekali saja). Pesan ini otomatis dihapus demi keamanan.");
     return;
   }
 
-  const username = session.username;
-  resetSession(msg, true);
-  bot.sendMessage(chatId, `Logout berhasil. Sampai jumpa, ${username}!`);
+  const [email, password] = args;
+  // Hapus pesan berisi password demi keamanan.
+  try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+
+  if (!db) {
+    bot.sendMessage(chatId, "Database tidak tersedia. Coba lagi nanti.");
+    return;
+  }
+
+  await ensureUser(telegramId, msg.from.username, msg.from.first_name);
+
+  try {
+    const existing = await db.query(
+      "SELECT converted FROM xclipaibot_users WHERE telegram_id = $1",
+      [telegramId]
+    );
+    if (existing.rows[0]?.converted) {
+      bot.sendMessage(chatId, "✅ Kamu sudah pernah klaim saldo dari langganan lama. Tidak bisa klaim lagi.");
+      return;
+    }
+
+    const auth = await authenticateUser(email, password);
+    if (!auth.success) {
+      bot.sendMessage(chatId, "Gagal: email/username atau password salah.");
+      return;
+    }
+
+    // Cegah satu akun diklaim oleh banyak Telegram ID.
+    const claimed = await db.query(
+      "SELECT telegram_id FROM xclipaibot_users WHERE linked_user_id = $1 AND telegram_id <> $2",
+      [auth.userId, telegramId]
+    );
+    if (claimed.rows.length > 0) {
+      bot.sendMessage(chatId, "Akun ini sudah pernah ditautkan ke Telegram lain.");
+      return;
+    }
+
+    const sub = await checkSubscription(auth.userId);
+    if (!sub.active) {
+      await db.query(
+        "UPDATE xclipaibot_users SET linked_user_id = $1, updated_at = NOW() WHERE telegram_id = $2",
+        [auth.userId, telegramId]
+      );
+      bot.sendMessage(chatId, "Akun berhasil ditautkan, tapi kamu tidak punya langganan aktif untuk dikonversi.\n\nIsi saldo lewat /topup (segera hadir) atau hubungi admin.");
+      return;
+    }
+
+    // Konversi atomik + anti double-claim (WHERE converted = FALSE).
+    const upd = await db.query(
+      `UPDATE xclipaibot_users
+         SET balance = balance + $1, linked_user_id = $2, converted = TRUE, updated_at = NOW()
+       WHERE telegram_id = $3 AND converted = FALSE
+       RETURNING balance`,
+      [CONVERSION_CREDITS, auth.userId, telegramId]
+    );
+    if (upd.rows.length === 0) {
+      bot.sendMessage(chatId, "✅ Kamu sudah pernah klaim saldo dari langganan lama.");
+      return;
+    }
+
+    bot.sendMessage(chatId, `✅ Berhasil! Langganan lama kamu dikonversi jadi ${CONVERSION_CREDITS} video.\n\n💳 Saldo sekarang: ${upd.rows[0].balance} video.\n\nLangsung kirim foto + video lalu /generate.`);
+  } catch (err) {
+    // 23505 = pelanggaran unique index linked_user_id: akun sudah diklaim Telegram lain
+    // (menangkap race dua /link paralel untuk akun yang sama).
+    if (err.code === "23505") {
+      bot.sendMessage(chatId, "Akun ini sudah pernah ditautkan ke Telegram lain.");
+      return;
+    }
+    console.error("[link] error:", err.message);
+    bot.sendMessage(chatId, "Terjadi kesalahan saat memproses. Coba lagi nanti.");
+  }
 });
 
 bot.onText(/\/reset/, (msg) => {
@@ -845,33 +902,19 @@ bot.onText(/\/reset/, (msg) => {
 
 bot.onText(/\/status/, async (msg) => {
   const session = getSession(msg);
+  const telegramId = msg.from.id;
+  const balance = await getBalance(telegramId);
+  const cd = getCooldownRemaining(telegramId);
   const lines = [
-    "📋 Status Session:",
-    `Login: ${session.loggedIn ? `Ya (${session.username})` : "Belum"}`,
-  ];
-
-  if (session.loggedIn) {
-    const subResult = await checkSubscription(session.userId);
-    if (subResult.active) {
-      const expDate = new Date(subResult.expiredAt).toLocaleDateString("id-ID", {
-        day: "numeric", month: "long", year: "numeric",
-      });
-      lines.push(`Langganan: Aktif - ${subResult.planName} (s/d ${expDate})`);
-    } else {
-      lines.push(`Langganan: Tidak aktif`);
-    }
-  }
-
-  lines.push(
+    "📋 Status:",
+    `💳 Saldo: ${balance} video`,
     `Foto: ${session.imageFile ? "Sudah ada" : "Belum"}`,
     `Video: ${session.videoFile ? "Sudah ada" : "Belum"}`,
     `Prompt: ${session.prompt || "(kosong)"}`,
     `Orientasi: ${session.orientation}`,
-    `Model: ${session.selectedModel ? (MODELS[session.selectedModel]?.name || session.selectedModel) : "(belum dipilih)"}`,
     `Generating: ${session.isGenerating ? "Ya" : "Tidak"}`,
-    `Cooldown: ${session.userId ? (() => { const r = getCooldownRemaining(session.userId); return r > 0 ? `${Math.ceil(r / 60000)} menit lagi` : "Siap generate"; })() : "N/A"}`,
-    `Generate hari ini: ${session.userId ? `${getDailyUsage(session.userId)}/${DAILY_LIMIT}` : "N/A"}`,
-  );
+    `Cooldown: ${cd > 0 ? `${Math.ceil(cd / 60000)} menit lagi` : "Siap generate"}`,
+  ];
   bot.sendMessage(msg.chat.id, lines.join("\n"));
 });
 
@@ -879,20 +922,6 @@ bot.on("text", async (msg) => {
   if (msg.text && msg.text.startsWith("/")) return;
   const chatId = msg.chat.id;
   const session = getSession(msg);
-
-  if (session.loginStep === "email") {
-    session.loginEmail = msg.text.trim();
-    session.loginStep = "password";
-    bot.sendMessage(chatId, "Masukkan password kamu:");
-    return;
-  }
-
-  if (session.loginStep === "password") {
-    const password = msg.text.trim();
-    try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
-    await processLogin(chatId, msg, session, session.loginEmail, password);
-    return;
-  }
 
   if (session.awaitingPrompt) {
     session.prompt = msg.text.trim();
@@ -1080,50 +1109,73 @@ bot.onText(/\/resetlimit(?:\s+(\d+))?/, async (msg, match) => {
     bot.sendMessage(chatId, "Hanya admin yang bisa menggunakan perintah ini.");
     return;
   }
-
-  const targetUserId = match[1] ? match[1].trim() : null;
-
-  if (targetUserId) {
-    userDailyUsage.delete(targetUserId);
-    userDailyUsage.delete(Number(targetUserId));
-    bot.sendMessage(chatId, `✅ Limit harian user ${targetUserId} sudah direset ke 0/${DAILY_LIMIT}.`);
+  const targetId = match[1] ? match[1].trim() : null;
+  if (!targetId) {
+    bot.sendMessage(chatId, "Format: /resetlimit <telegram_id>\n\nMenghapus cooldown user tersebut supaya bisa generate lagi.");
     return;
   }
+  userCooldowns.delete(targetId);
+  userCooldowns.delete(Number(targetId));
+  bot.sendMessage(chatId, `✅ Cooldown user ${targetId} sudah direset. Siap generate lagi.`);
+});
 
-  const usageList = [];
-  for (const [uid, entry] of userDailyUsage.entries()) {
-    const today = getTodayKey();
-    if (entry.date === today && entry.count > 0) {
-      usageList.push({ uid, count: entry.count });
-    }
+bot.onText(/\/addcredit(?:\s+(\d+)\s+(-?\d+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(msg)) {
+    bot.sendMessage(chatId, "Hanya admin yang bisa menggunakan perintah ini.");
+    return;
   }
-  usageList.sort((a, b) => b.count - a.count);
-
-  let text = `📊 *Daily Limit Status*\n\n`;
-  text += `Limit per user: ${DAILY_LIMIT}x/hari\n`;
-  text += `User aktif hari ini: ${usageList.length}\n\n`;
-
-  if (usageList.length > 0) {
-    text += `*Usage hari ini:*\n`;
-    for (const { uid, count } of usageList.slice(0, 20)) {
-      const bar = count >= DAILY_LIMIT ? "🔴" : count >= DAILY_LIMIT * 0.7 ? "🟡" : "🟢";
-      text += `${bar} User ${uid}: ${count}/${DAILY_LIMIT}\n`;
-    }
-    if (usageList.length > 20) text += `...dan ${usageList.length - 20} user lainnya\n`;
-  } else {
-    text += `Tidak ada user yang generate hari ini.\n`;
+  if (!match[1] || match[2] === undefined) {
+    bot.sendMessage(chatId, "Format: /addcredit <telegram_id> <jumlah>\n\nContoh: /addcredit 123456789 50\n(pakai angka negatif untuk mengurangi saldo)");
+    return;
   }
+  const targetId = match[1].trim();
+  const amount = parseInt(match[2], 10);
+  if (!Number.isFinite(amount) || amount === 0) {
+    bot.sendMessage(chatId, "Jumlah tidak valid.");
+    return;
+  }
+  try {
+    const newBal = await addBalance(targetId, amount);
+    bot.sendMessage(chatId, `✅ Saldo user ${targetId} sekarang: ${newBal} video (${amount >= 0 ? "+" : ""}${amount}).`);
+    bot.sendMessage(targetId, `💳 Saldo kamu ${amount >= 0 ? "ditambah" : "dikurangi"} ${Math.abs(amount)} oleh admin.\nSaldo sekarang: ${newBal} video.`).catch(() => {});
+  } catch (err) {
+    console.error("[addcredit] error:", err.message);
+    bot.sendMessage(chatId, "Gagal mengubah saldo. Coba lagi nanti.");
+  }
+});
 
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "🔄 Reset Semua User", callback_data: "admin_resetall" }],
-      ...usageList.slice(0, 10).map(({ uid, count }) => ([
-        { text: `Reset User ${uid} (${count}/${DAILY_LIMIT})`, callback_data: `admin_resetuser_${uid}` }
-      ])),
-    ]
-  };
-
-  bot.sendMessage(chatId, text, { parse_mode: "Markdown", reply_markup: keyboard });
+bot.onText(/\/users/, async (msg) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(msg)) {
+    bot.sendMessage(chatId, "Hanya admin yang bisa menggunakan perintah ini.");
+    return;
+  }
+  if (!db) {
+    bot.sendMessage(chatId, "Database tidak tersedia.");
+    return;
+  }
+  try {
+    const totals = await db.query("SELECT COUNT(*)::int n, COALESCE(SUM(balance),0)::int s FROM xclipaibot_users");
+    const res = await db.query(
+      "SELECT telegram_id, username, first_name, balance FROM xclipaibot_users ORDER BY balance DESC, updated_at DESC LIMIT 50"
+    );
+    if (res.rows.length === 0) {
+      bot.sendMessage(chatId, "Belum ada user.");
+      return;
+    }
+    let text = `👥 Users: ${totals.rows[0].n} | Total saldo: ${totals.rows[0].s} video\n\n`;
+    for (const r of res.rows) {
+      const name = r.first_name || "-";
+      const uname = r.username ? `@${r.username}` : "-";
+      text += `• ${name} ${uname} | ${r.telegram_id} | 💳 ${r.balance}\n`;
+    }
+    if (res.rows.length === 50) text += `\n(menampilkan 50 teratas berdasarkan saldo)`;
+    bot.sendMessage(chatId, text);
+  } catch (err) {
+    console.error("[users] error:", err.message);
+    bot.sendMessage(chatId, "Gagal mengambil daftar user.");
+  }
 });
 
 bot.on("photo", async (msg) => {
@@ -1485,30 +1537,20 @@ async function pollForResult(chatId, pollTarget, apiKey) {
 bot.onText(/\/generate/, async (msg) => {
   const chatId = msg.chat.id;
   const session = getSession(msg);
-
-  if (!session.loggedIn) {
-    bot.sendMessage(chatId, "Kamu harus login dulu. Ketik: /login username password");
-    return;
-  }
-
-  const subResult = await checkSubscription(session.userId);
-  if (!subResult.active) {
-    bot.sendMessage(chatId, `⚠️ ${subResult.reason}`);
-    return;
-  }
+  const telegramId = msg.from.id;
 
   if (session.isGenerating) {
     bot.sendMessage(chatId, "Sedang dalam proses generate. Tunggu sampai selesai.");
     return;
   }
 
-  const dailyRemaining = getDailyRemaining(session.userId);
-  if (dailyRemaining <= 0) {
-    bot.sendMessage(chatId, `Batas harian tercapai (${DAILY_LIMIT}x/hari). Coba lagi besok.`);
+  const balance = await getBalance(telegramId);
+  if (balance <= 0) {
+    bot.sendMessage(chatId, "⚠️ Saldo video kamu habis (0).\n\nIsi saldo lewat /topup (segera hadir) atau hubungi admin. Cek /saldo.");
     return;
   }
 
-  const cooldownLeft = getCooldownRemaining(session.userId);
+  const cooldownLeft = getCooldownRemaining(telegramId);
   if (cooldownLeft > 0) {
     const minutesLeft = Math.ceil(cooldownLeft / 60000);
     const secondsLeft = Math.ceil(cooldownLeft / 1000);
@@ -1548,38 +1590,6 @@ bot.on("callback_query", async (query) => {
     return;
   }
 
-  if (data === "admin_resetall") {
-    const adminMsg = { from: query.from, chat: query.message.chat };
-    if (!isAdmin(adminMsg)) {
-      bot.answerCallbackQuery(query.id, { text: "Hanya admin." });
-      return;
-    }
-    const totalBefore = userDailyUsage.size;
-    userDailyUsage.clear();
-    bot.answerCallbackQuery(query.id, { text: `✅ Semua limit direset!` });
-    bot.editMessageText(
-      `✅ *Reset berhasil!*\n\nLimit harian semua user sudah direset ke 0/${DAILY_LIMIT}.\nTotal user yang direset: ${totalBefore}`,
-      { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
-    ).catch(() => {
-      bot.sendMessage(chatId, `✅ Limit harian semua user direset. Total: ${totalBefore} user.`);
-    });
-    return;
-  }
-
-  if (data.startsWith("admin_resetuser_")) {
-    const adminMsg = { from: query.from, chat: query.message.chat };
-    if (!isAdmin(adminMsg)) {
-      bot.answerCallbackQuery(query.id, { text: "Hanya admin." });
-      return;
-    }
-    const uid = data.replace("admin_resetuser_", "");
-    userDailyUsage.delete(uid);
-    userDailyUsage.delete(Number(uid));
-    bot.answerCallbackQuery(query.id, { text: `✅ Limit user ${uid} direset!` });
-    bot.sendMessage(chatId, `✅ Limit harian user ${uid} direset ke 0/${DAILY_LIMIT}.`);
-    return;
-  }
-
   if (data === "dur_5" || data === "dur_10") {
     const session = getSession({ chat: query.message.chat, from: query.from });
     session.duration = data === "dur_5" ? "5" : "10";
@@ -1609,11 +1619,6 @@ bot.on("callback_query", async (query) => {
 
   const msg = { chat: query.message.chat, from: query.from };
   const session = getSession(msg);
-
-  if (!session.loggedIn) {
-    bot.answerCallbackQuery(query.id, { text: "Kamu harus login dulu." });
-    return;
-  }
 
   if (session.isGenerating) {
     bot.answerCallbackQuery(query.id, { text: "Sedang dalam proses generate." });
@@ -1665,10 +1670,8 @@ async function runGenerate(chatId, msg, session, modelConfig) {
     }
 
     console.log(`[flora] Job ${runId} submitted in ${submitTime}s (pollUrl=${pollUrl})`);
-    setCooldown(session.userId);
-    incrementDailyUsage(session.userId);
-    const remaining = getDailyRemaining(session.userId);
-    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${runId || '-'}\nCooldown: 3 menit\nSisa generate hari ini: ${remaining}/${DAILY_LIMIT}\n\nMenunggu hasil...`);
+    setCooldown(msg.from.id);
+    bot.sendMessage(chatId, `Task berhasil disubmit! (${submitTime}s)\nModel: ${modelConfig.name}\nJob ID: ${runId || '-'}\nCooldown: 3 menit\n\nMenunggu hasil...`);
 
     const pollStart = Date.now();
     const result = await pollForResult(chatId, pollUrl, session.apiKey);
@@ -1726,6 +1729,7 @@ async function runGenerate(chatId, msg, session, modelConfig) {
       console.log("[flora] Extracted video URLs:", uniqueUrls);
 
       if (uniqueUrls.length > 0) {
+        let deliveredAny = false;
         for (const videoUrl of uniqueUrls) {
           const videoCaption = `✅ Video selesai! Model: ${modelConfig.emoji} ${modelConfig.name}\n\nPrompt: ${session.prompt || "(default)"}`;
           let sent = false;
@@ -1787,6 +1791,19 @@ async function runGenerate(chatId, msg, session, modelConfig) {
 
           if (!sent) {
             bot.sendMessage(chatId, "Video selesai tapi gagal dikirim. Coba /generate lagi ya.");
+          } else {
+            deliveredAny = true;
+          }
+        }
+
+        // Potong 1 saldo HANYA kalau video benar-benar terkirim ke user
+        // (bukan saat submit, bukan saat gagal, bukan kalau pengiriman gagal total).
+        if (deliveredAny) {
+          const newBalance = await deductBalance(msg.from.id, 1);
+          if (newBalance !== null) {
+            bot.sendMessage(chatId, `💳 Saldo dipotong 1. Sisa saldo: ${newBalance} video.`);
+          } else {
+            console.error(`[saldo] deduct gagal untuk ${msg.from.id} walau video terkirim (saldo tidak cukup / race)`);
           }
         }
       } else {
