@@ -477,7 +477,9 @@ app.post("/webhook/klikqris", async (req, res) => {
   try {
     if (!db) return res.status(200).json({ ok: true, ignored: "no db" });
     const body = req.body || {};
-    const d = body.data || {};
+    // "/api/qris" mengirim payload FLAT (order_id/status/signature di root); versi
+    // lama menyarangkannya di body.data. Dukung keduanya.
+    const d = (body.data && typeof body.data === "object") ? body.data : body;
     const orderId = d.order_id;
     if (!orderId) return res.status(200).json({ ok: true, ignored: "no order_id" });
 
@@ -527,7 +529,7 @@ const CONVERSION_CREDITS = 100;
 // ===== KlikQRIS payment gateway (top-up otomatis) =====
 const KLIKQRIS_API_KEY = process.env.KLIKQRIS_API_KEY;
 const KLIKQRIS_MERCHANT_ID = process.env.KLIKQRIS_MERCHANT_ID;
-const KLIKQRIS_BASE = "https://klikqris.com/api/qrisv2";
+const KLIKQRIS_BASE = "https://klikqris.com/api/qris";
 // Top-up bebas: 1 video = PRICE_PER_VIDEO rupiah. User pilih/ketik jumlah video.
 const PRICE_PER_VIDEO = 2000;
 const TOPUP_MIN_VIDEOS = 1;
@@ -644,9 +646,12 @@ async function deductBalance(telegramId, amount = 1) {
 
 // ===== KlikQRIS helpers =====
 async function createKlikqrisTransaction(orderId, amount, keterangan) {
+  const body = { order_id: orderId, id_merchant: KLIKQRIS_MERCHANT_ID, amount, keterangan: keterangan || "" };
+  // callback_url per-transaksi: KlikQRIS "/api/qris" akan POST ke sini saat lunas/expired.
+  if (PUBLIC_DOMAIN) body.callback_url = `https://${PUBLIC_DOMAIN}/webhook/klikqris`;
   const resp = await axios.post(
     `${KLIKQRIS_BASE}/create`,
-    { order_id: orderId, id_merchant: KLIKQRIS_MERCHANT_ID, amount, keterangan: keterangan || "" },
+    body,
     {
       headers: {
         "Content-Type": "application/json",
@@ -661,7 +666,7 @@ async function createKlikqrisTransaction(orderId, amount, keterangan) {
 
 async function checkKlikqrisStatus(orderId) {
   const resp = await axios.get(
-    `${KLIKQRIS_BASE}/status/${KLIKQRIS_MERCHANT_ID}/${orderId}`,
+    `${KLIKQRIS_BASE}/status/${orderId}`,
     {
       headers: { "x-api-key": KLIKQRIS_API_KEY, "id_merchant": KLIKQRIS_MERCHANT_ID },
       timeout: 30000,
@@ -806,10 +811,10 @@ async function handleTopupCheck(query) {
   }
 }
 
-// ===== Auto-poll top-up (fallback andal kalau webhook tidak terdaftar) =====
-// KlikQRIS "MY PG v2" tidak punya kolom pendaftaran webhook di dashboard, jadi
-// kita tidak bergantung pada webhook: bot mengecek sendiri status semua order
-// PENDING secara berkala dan mengkredit saldo otomatis begitu PAID. Idempotent
+// ===== Auto-poll top-up (fallback andal kalau webhook tidak sampai) =====
+// KlikQRIS "/api/qris" mendukung callback_url, tapi kita tetap tidak 100%
+// bergantung pada webhook (bisa gagal sampai): bot mengecek sendiri status semua
+// order PENDING secara berkala dan mengkredit saldo otomatis begitu PAID/SUCCESS. Idempotent
 // (creditTopupIfPaid) jadi aman walau webhook/tombol manual juga jalan. Sweep ini
 // juga tetap bekerja setelah bot restart (baca dari DB, bukan timer in-memory).
 const TOPUP_POLL_INTERVAL_MS = 15000;
