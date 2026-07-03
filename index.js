@@ -71,6 +71,20 @@ if (RAILWAY_DB_URL) {
         ON xclipaibot_users (linked_user_id) WHERE linked_user_id IS NOT NULL
       `))
     .then(() => console.log("xclipaibot_users linked_user_id unique index ready"))
+    .then(() => db.query(`
+        CREATE TABLE IF NOT EXISTS xclipaibot_topups (
+          order_id TEXT PRIMARY KEY,
+          telegram_id BIGINT NOT NULL,
+          amount INTEGER NOT NULL,
+          total_amount NUMERIC NOT NULL,
+          video_count INTEGER NOT NULL,
+          signature TEXT,
+          status TEXT NOT NULL DEFAULT 'PENDING',
+          created_at TIMESTAMP DEFAULT NOW(),
+          paid_at TIMESTAMP
+        )
+      `))
+    .then(() => console.log("xclipaibot_topups table ready"))
     .catch((err) => console.error("Database connection error:", err.message));
 } else {
   console.warn("RAILWAY_DATABASE_URL not set - login feature disabled");
@@ -458,6 +472,43 @@ app.get("/", (req, res) => {
   res.json({ status: "ok", bot: "Kling MC V3 PRO" });
 });
 
+// Webhook KlikQRIS: dipanggil otomatis saat status berubah (PAID/EXPIRED).
+app.post("/webhook/klikqris", async (req, res) => {
+  try {
+    if (!db) return res.status(200).json({ ok: true, ignored: "no db" });
+    const body = req.body || {};
+    const d = body.data || {};
+    const orderId = d.order_id;
+    if (!orderId) return res.status(200).json({ ok: true, ignored: "no order_id" });
+
+    const row = (await db.query("SELECT * FROM xclipaibot_topups WHERE order_id = $1", [orderId])).rows[0];
+    if (!row) return res.status(200).json({ ok: true, ignored: "unknown order" });
+
+    // Validasi signature: harus sama dengan yang didapat saat Membuat Transaksi.
+    if (!row.signature || !d.signature || String(d.signature) !== String(row.signature)) {
+      console.error("[topup] webhook signature mismatch untuk", orderId);
+      return res.status(401).json({ ok: false, error: "invalid signature" });
+    }
+
+    const status = String(d.status || "").toUpperCase();
+    if (status === "PAID" || status === "SUCCESS") {
+      const credited = await creditTopupIfPaid(orderId);
+      if (credited) {
+        bot.sendMessage(
+          row.telegram_id,
+          `✅ Pembayaran diterima! Saldo +${credited.videoCount} video.\n\n💳 Saldo sekarang: ${credited.balance} video.\n\nLangsung kirim foto + video lalu /generate.`
+        );
+      }
+    } else if (status === "EXPIRED") {
+      await db.query("UPDATE xclipaibot_topups SET status = 'EXPIRED' WHERE order_id = $1 AND status = 'PENDING'", [orderId]);
+    }
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error("[topup] webhook error:", err.message);
+    return res.status(200).json({ ok: true });
+  }
+});
+
 app.listen(FILE_SERVER_PORT, "0.0.0.0", () => {
   console.log(`File server running on port ${FILE_SERVER_PORT}`);
 });
@@ -472,6 +523,18 @@ function getPublicFileUrl(filename) {
 const COOLDOWN_MS = 3 * 60 * 1000;
 // Konversi langganan lama -> saldo (dipakai oleh /link). Ubah angka ini sesuka hati.
 const CONVERSION_CREDITS = 100;
+
+// ===== KlikQRIS payment gateway (top-up otomatis) =====
+const KLIKQRIS_API_KEY = process.env.KLIKQRIS_API_KEY;
+const KLIKQRIS_MERCHANT_ID = process.env.KLIKQRIS_MERCHANT_ID;
+const KLIKQRIS_BASE = "https://klikqris.com/api/qrisv2";
+// Paket top-up: nominal Rupiah -> jumlah video (saldo). Ubah sesuka hati.
+const TOPUP_PACKAGES = [
+  { amount: 15000, videos: 20 },
+  { amount: 30000, videos: 45 },
+  { amount: 50000, videos: 80 },
+  { amount: 100000, videos: 175 },
+];
 const userCooldowns = new Map();
 const userKeyRotation = new Map();
 
@@ -580,6 +643,133 @@ async function deductBalance(telegramId, amount = 1) {
     [telegramId, amount]
   );
   return res.rows.length ? res.rows[0].balance : null;
+}
+
+// ===== KlikQRIS helpers =====
+async function createKlikqrisTransaction(orderId, amount, keterangan) {
+  const resp = await axios.post(
+    `${KLIKQRIS_BASE}/create`,
+    { order_id: orderId, id_merchant: KLIKQRIS_MERCHANT_ID, amount, keterangan: keterangan || "" },
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": KLIKQRIS_API_KEY,
+        "id_merchant": KLIKQRIS_MERCHANT_ID,
+      },
+      timeout: 30000,
+    }
+  );
+  return resp.data;
+}
+
+async function checkKlikqrisStatus(orderId) {
+  const resp = await axios.get(
+    `${KLIKQRIS_BASE}/status/${KLIKQRIS_MERCHANT_ID}/${orderId}`,
+    {
+      headers: { "x-api-key": KLIKQRIS_API_KEY, "id_merchant": KLIKQRIS_MERCHANT_ID },
+      timeout: 30000,
+    }
+  );
+  return resp.data;
+}
+
+// Tambah saldo untuk order yang lunas — idempotent (aman dari webhook dobel).
+// Hanya menambah saldo kalau status masih PENDING; return null kalau sudah diproses.
+async function creditTopupIfPaid(orderId) {
+  if (!db) return null;
+  const upd = await db.query(
+    `UPDATE xclipaibot_topups SET status = 'PAID', paid_at = NOW()
+     WHERE order_id = $1 AND status = 'PENDING'
+     RETURNING telegram_id, video_count`,
+    [orderId]
+  );
+  if (upd.rows.length === 0) return null;
+  const { telegram_id, video_count } = upd.rows[0];
+  const balance = await addBalance(telegram_id, video_count);
+  return { telegramId: telegram_id, videoCount: video_count, balance };
+}
+
+async function handleTopupSelect(query) {
+  const chatId = query.message.chat.id;
+  const telegramId = query.from.id;
+  const idx = parseInt(query.data.split(":")[1], 10);
+  const pkg = TOPUP_PACKAGES[idx];
+  if (!pkg) { bot.answerCallbackQuery(query.id, { text: "Paket tidak dikenal." }); return; }
+  if (!KLIKQRIS_API_KEY || !KLIKQRIS_MERCHANT_ID) {
+    bot.answerCallbackQuery(query.id, { text: "Top-up belum aktif." });
+    return;
+  }
+  bot.answerCallbackQuery(query.id, { text: "Membuat tagihan QRIS..." });
+  await ensureUser(telegramId, query.from.username, query.from.first_name);
+  const orderId = `XCA-${telegramId}-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
+  try {
+    const res = await createKlikqrisTransaction(orderId, pkg.amount, `Top-up ${pkg.videos} video`);
+    const d = (res && res.data) ? res.data : {};
+    if (!res || res.status !== true || !d.order_id) {
+      console.error("[topup] create gagal:", JSON.stringify(res));
+      bot.sendMessage(chatId, "Gagal membuat tagihan. Coba lagi nanti.");
+      return;
+    }
+    await db.query(
+      `INSERT INTO xclipaibot_topups (order_id, telegram_id, amount, total_amount, video_count, signature, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'PENDING')
+       ON CONFLICT (order_id) DO NOTHING`,
+      [orderId, telegramId, pkg.amount, d.total_amount || pkg.amount, pkg.videos, d.signature || null]
+    );
+    const total = d.total_amount || pkg.amount;
+    const caption =
+      `💳 *Top-up ${pkg.videos} video*\n\n` +
+      `Total bayar: *Rp${Number(total).toLocaleString("id-ID")}*\n` +
+      `Scan QRIS di atas pakai e-wallet / m-banking apa saja.\n\n` +
+      `⏳ Berlaku sampai: ${d.expired_at || "-"}\n\n` +
+      `Setelah bayar, saldo bertambah otomatis. Kalau lama, tekan "Cek pembayaran".`;
+    const keyboard = {
+      inline_keyboard: [
+        ...(d.direct_url ? [[{ text: "🔗 Halaman bayar", url: d.direct_url }]] : []),
+        [{ text: "✅ Cek pembayaran", callback_data: `topupcheck:${orderId}` }],
+      ],
+    };
+    if (d.qris_url) {
+      await bot.sendPhoto(chatId, d.qris_url, { caption, parse_mode: "Markdown", reply_markup: keyboard });
+    } else {
+      await bot.sendMessage(chatId, caption, { parse_mode: "Markdown", reply_markup: keyboard });
+    }
+  } catch (err) {
+    console.error("[topup] create error:", err.response?.data || err.message);
+    bot.sendMessage(chatId, "Gagal membuat tagihan QRIS. Coba lagi nanti.");
+  }
+}
+
+async function handleTopupCheck(query) {
+  const chatId = query.message.chat.id;
+  const orderId = query.data.split(":").slice(1).join(":");
+  bot.answerCallbackQuery(query.id, { text: "Mengecek pembayaran..." });
+  try {
+    const row = (await db.query("SELECT * FROM xclipaibot_topups WHERE order_id = $1", [orderId])).rows[0];
+    if (!row) { bot.sendMessage(chatId, "Transaksi tidak ditemukan."); return; }
+    if (row.status === "PAID") {
+      bot.sendMessage(chatId, "✅ Pembayaran ini sudah lunas & saldo sudah ditambahkan.");
+      return;
+    }
+    const res = await checkKlikqrisStatus(orderId);
+    const st = String(res?.data?.status || "").toUpperCase();
+    if (st === "PAID" || st === "SUCCESS") {
+      const credited = await creditTopupIfPaid(orderId);
+      if (credited) {
+        bot.sendMessage(chatId, `✅ Pembayaran diterima! Saldo +${credited.videoCount} video.\n💳 Saldo sekarang: ${credited.balance} video.`);
+      } else {
+        bot.sendMessage(chatId, "✅ Pembayaran sudah diproses.");
+      }
+    } else if (st === "EXPIRED") {
+      await db.query("UPDATE xclipaibot_topups SET status = 'EXPIRED' WHERE order_id = $1 AND status = 'PENDING'", [orderId]);
+      bot.sendMessage(chatId, "⌛ QRIS sudah kedaluwarsa. Silakan /topup lagi.");
+    } else {
+      bot.sendMessage(chatId, "⏳ Pembayaran belum masuk. Coba lagi beberapa saat setelah kamu bayar.");
+    }
+  } catch (err) {
+    console.error("[topup] check error:", err.response?.data || err.message);
+    bot.sendMessage(chatId, "Gagal cek status. Coba lagi nanti.");
+  }
 }
 
 async function downloadTelegramFile(fileId) {
@@ -892,6 +1082,51 @@ bot.onText(/\/link(.*)/, async (msg, match) => {
     }
     console.error("[link] error:", err.message);
     bot.sendMessage(chatId, "Terjadi kesalahan saat memproses. Coba lagi nanti.");
+  }
+});
+
+bot.onText(/\/topup/, async (msg) => {
+  const chatId = msg.chat.id;
+  await ensureUser(msg.from.id, msg.from.username, msg.from.first_name);
+  if (!KLIKQRIS_API_KEY || !KLIKQRIS_MERCHANT_ID) {
+    bot.sendMessage(chatId, "Fitur top-up belum aktif. Hubungi admin.");
+    return;
+  }
+  const rows = TOPUP_PACKAGES.map((p, i) => ([{
+    text: `Rp${p.amount.toLocaleString("id-ID")} → ${p.videos} video`,
+    callback_data: `topup:${i}`,
+  }]));
+  bot.sendMessage(
+    chatId,
+    "💳 *Top-up Saldo*\n\nPilih paket di bawah. Setelah bayar via QRIS, saldo otomatis bertambah.",
+    { parse_mode: "Markdown", reply_markup: { inline_keyboard: rows } }
+  );
+});
+
+bot.onText(/\/topuphistory(?:\s+(\d+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  if (!isAdmin(msg)) {
+    bot.sendMessage(chatId, "Hanya admin yang bisa menggunakan perintah ini.");
+    return;
+  }
+  try {
+    const filterId = match[1] ? match[1].trim() : null;
+    const q = filterId
+      ? await db.query("SELECT * FROM xclipaibot_topups WHERE telegram_id = $1 ORDER BY created_at DESC LIMIT 20", [filterId])
+      : await db.query("SELECT * FROM xclipaibot_topups ORDER BY created_at DESC LIMIT 20");
+    if (q.rows.length === 0) {
+      bot.sendMessage(chatId, "Belum ada transaksi top-up.");
+      return;
+    }
+    let text = "📊 Riwayat top-up terbaru:\n\n";
+    for (const r of q.rows) {
+      const icon = r.status === "PAID" ? "✅" : r.status === "EXPIRED" ? "⌛" : "⏳";
+      text += `${icon} ${r.order_id}\n  user ${r.telegram_id} · Rp${Number(r.total_amount).toLocaleString("id-ID")} · ${r.video_count} video · ${r.status}\n`;
+    }
+    bot.sendMessage(chatId, text);
+  } catch (err) {
+    console.error("[topup] history error:", err.message);
+    bot.sendMessage(chatId, "Gagal mengambil riwayat top-up.");
   }
 });
 
@@ -1587,6 +1822,16 @@ bot.on("callback_query", async (query) => {
 
   if (data === "noop") {
     bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  if (data.startsWith("topup:")) {
+    await handleTopupSelect(query);
+    return;
+  }
+
+  if (data.startsWith("topupcheck:")) {
+    await handleTopupCheck(query);
     return;
   }
 

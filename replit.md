@@ -24,8 +24,16 @@ This project runs directly on Replit. The "Start application" workflow runs `npm
 - **Saldo = per-generate credits.** 1 saldo = 1 video. Saldo is deducted **only on success** (video completed with a usable output URL), never on submit or on failure. The atomic `deductBalance` (`UPDATE ... WHERE balance >= amount`) prevents negative/racey balances.
 - `/generate` requires `balance > 0` plus the cooldown; the daily-limit system was removed.
 - **Migration `/link email password`:** one-time claim. Authenticates against the shared `users` table + `checkSubscription`; if the account has an active subscription it grants a FLAT `CONVERSION_CREDITS` (100) saldo, sets `converted=TRUE` and `linked_user_id`. Anti-double-claim via `WHERE converted=FALSE`; an account already linked to another Telegram ID is rejected. The command message is auto-deleted (contains a password).
-- User commands: `/saldo` (check balance), `/link` (claim), `/status`.
-- Admin commands: `/addcredit <telegram_id> <jumlah>` (add/subtract saldo, negative allowed), `/users` (list users: name / @username / id / balance), `/resetlimit <telegram_id>` (clear cooldown).
+- User commands: `/saldo` (check balance), `/topup` (buy saldo), `/link` (claim), `/status`.
+- Admin commands: `/addcredit <telegram_id> <jumlah>` (add/subtract saldo, negative allowed), `/users` (list users: name / @username / id / balance), `/resetlimit <telegram_id>` (clear cooldown), `/topuphistory [telegram_id]` (recent top-ups).
+
+## Auto top-up (KlikQRIS payment gateway)
+- Users buy saldo themselves via `/topup` → pick a package → receive a QRIS image + payment link. On payment, saldo is credited **automatically**.
+- Provider: **KlikQRIS "MY PG" v2**, base `https://klikqris.com/api/qrisv2`. Auth via headers `x-api-key` + `id_merchant`.
+- Create: `POST /create` `{ order_id, id_merchant, amount, keterangan }` → `data.total_amount` (charge this to the buyer), `data.qris_url` (QR image), `data.direct_url` (pay page), `data.signature`, `data.expired_at`, `status:"PENDING"`.
+- Status: `GET /status/{id_merchant}/{order_id}`.
+- **Webhook** `POST /webhook/klikqris` (register this public URL in the KlikQRIS dashboard) — fired on `PAID`/`EXPIRED`. Verified by matching the webhook's `data.signature` against the signature stored at create time (NOT HMAC). Idempotent (credits only while the row is still `PENDING`), always returns HTTP 200. A "Cek pembayaran" button also polls `/status` as a fallback if the webhook is missed.
+- Packages live in `TOPUP_PACKAGES` (`index.js`), mapping nominal Rupiah → jumlah video; easy to edit.
 
 ## Multi-key pool system
 - Flora API keys are stored in the `api_key_pool` table; each user is assigned keys from the pool (`user_api_keys`).
@@ -43,13 +51,15 @@ This project runs directly on Replit. The "Start application" workflow runs `npm
 - `FLORA_API_KEY` — a Flora AI API key (used for model/context discovery; per-user generation uses pooled keys). Configured.
 - `RAILWAY_DATABASE_URL` / `DATABASE_URL` — PostgreSQL connection string. Configured.
 - `TELEGRAM_BOT_TOKEN` — Telegram bot token from @BotFather. **Required for the bot to run.**
-- `ADMIN_TELEGRAM_IDS` — comma-separated Telegram user IDs allowed to use admin commands (`/addkeys`, `/poolstatus`, `/addcredit`, `/users`, `/resetlimit`).
-- `REPLIT_DEV_DOMAIN` — used to build public URLs for uploaded media (runtime-provided).
+- `ADMIN_TELEGRAM_IDS` — comma-separated Telegram user IDs allowed to use admin commands (`/addkeys`, `/poolstatus`, `/addcredit`, `/users`, `/resetlimit`, `/topuphistory`).
+- `KLIKQRIS_API_KEY` — KlikQRIS `x-api-key` for the top-up gateway. **Required for `/topup` to work.**
+- `KLIKQRIS_MERCHANT_ID` — KlikQRIS `id_merchant`. **Required for `/topup` to work.**
+- `REPLIT_DEV_DOMAIN` / `RAILWAY_PUBLIC_DOMAIN` — used to build public URLs for uploaded media (runtime-provided). The webhook URL registered at KlikQRIS is `https://<public-domain>/webhook/klikqris`.
 
 ## Database
 - **The Postgres instance (`RAILWAY_DATABASE_URL`) is SHARED across multiple bots.** Tables `users`, `subscriptions`, `motion_subscriptions`, `motion_rooms`, `subscription_plans`, `payments` are owned by other apps and treated as **READ-ONLY** here (used only by `/link`). Never write to them. `xclipmotion_bot_users` belongs to a different bot — do not touch.
 - **All tables owned by this bot are prefixed `xclipaibot_`.** New tables must keep that prefix.
-- Tables this bot owns/writes: `api_key_pool`, `user_api_keys`, `xclipaibot_users` (`telegram_id` PK, `username`, `first_name`, `balance`, `linked_user_id`, `converted`, timestamps).
+- Tables this bot owns/writes: `api_key_pool`, `user_api_keys`, `xclipaibot_users` (`telegram_id` PK, `username`, `first_name`, `balance`, `linked_user_id`, `converted`, timestamps), `xclipaibot_topups` (`order_id` PK, `telegram_id`, `amount`, `total_amount`, `video_count`, `signature`, `status`, timestamps).
 
 ## User limits
 - Generation requires available saldo (1 per video).
