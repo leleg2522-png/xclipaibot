@@ -672,7 +672,10 @@ async function checkKlikqrisStatus(orderId) {
 }
 
 // Tambah saldo untuk order yang lunas — idempotent (aman dari webhook dobel).
-// Hanya menambah saldo kalau status masih PENDING; return null kalau sudah diproses.
+// Hanya dipanggil ketika provider (KlikQRIS) sudah memastikan PAID. Menerima baris
+// berstatus PENDING maupun EXPIRED: kalau ternyata benar dibayar (mis. dibayar mepet
+// atau status sempat ketinggalan jadi EXPIRED), saldo tetap masuk. Baris yang sudah
+// PAID diabaikan (return null) sehingga tidak pernah dobel.
 // Transaksional: kunci baris order, tambah saldo, lalu tandai PAID dalam SATU commit
 // sehingga tidak mungkin status jadi PAID tanpa saldo bertambah (atau sebaliknya).
 async function creditTopupIfPaid(orderId) {
@@ -682,7 +685,7 @@ async function creditTopupIfPaid(orderId) {
     await client.query("BEGIN");
     const row = (await client.query(
       `SELECT telegram_id, video_count FROM xclipaibot_topups
-       WHERE order_id = $1 AND status = 'PENDING' FOR UPDATE`,
+       WHERE order_id = $1 AND status IN ('PENDING', 'EXPIRED') FOR UPDATE`,
       [orderId]
     )).rows[0];
     if (!row) {
@@ -802,6 +805,76 @@ async function handleTopupCheck(query) {
     console.error("[topup] check error:", err.response?.data || err.message);
     bot.sendMessage(chatId, "Gagal cek status. Coba lagi nanti.");
   }
+}
+
+// ===== Auto-poll top-up (fallback andal kalau webhook tidak terdaftar) =====
+// KlikQRIS "MY PG v2" tidak punya kolom pendaftaran webhook di dashboard, jadi
+// kita tidak bergantung pada webhook: bot mengecek sendiri status semua order
+// PENDING secara berkala dan mengkredit saldo otomatis begitu PAID. Idempotent
+// (creditTopupIfPaid) jadi aman walau webhook/tombol manual juga jalan. Sweep ini
+// juga tetap bekerja setelah bot restart (baca dari DB, bukan timer in-memory).
+const TOPUP_POLL_INTERVAL_MS = 15000;
+const TOPUP_POLL_WINDOW_MINUTES = 120; // berhenti poll order yang lebih tua dari ini
+const TOPUP_POLL_CONCURRENCY = 3;      // batasi request paralel (pool DB shared, max 5)
+let topupPollRunning = false;
+
+async function pollOnePendingTopup(order) {
+  const orderId = order.order_id;
+  try {
+    const res = await checkKlikqrisStatus(orderId);
+    const st = String(res?.data?.status || "").toUpperCase();
+    if (st === "PAID" || st === "SUCCESS") {
+      const credited = await creditTopupIfPaid(orderId);
+      if (credited) {
+        bot.sendMessage(
+          credited.telegramId,
+          `✅ Pembayaran diterima! Saldo +${credited.videoCount} video.\n\n💳 Saldo sekarang: ${credited.balance} video.\n\nLangsung kirim foto + video lalu /generate.`
+        ).catch(() => {});
+      }
+    } else if (st === "EXPIRED") {
+      await db.query("UPDATE xclipaibot_topups SET status = 'EXPIRED' WHERE order_id = $1 AND status = 'PENDING'", [orderId]);
+    }
+  } catch (err) {
+    // Jangan spam log; error transien akan dicoba lagi pada sweep berikutnya.
+    console.error("[topup] poll error", orderId, err.response?.data?.message || err.message);
+  }
+}
+
+async function sweepPendingTopups() {
+  if (!db || !KLIKQRIS_API_KEY || !KLIKQRIS_MERCHANT_ID) return;
+  if (topupPollRunning) return; // cegah sweep menumpuk
+  topupPollRunning = true;
+  try {
+    // Poll hanya order PENDING yang masih dalam jendela waktu, untuk membatasi
+    // beban API/DB. Order yang lebih tua TIDAK dipaksa EXPIRED (itu bisa memblokir
+    // kredit untuk pembayaran yang sah) — dibiarkan PENDING; masih bisa dikreditkan
+    // lewat tombol "Cek pembayaran" atau ketika provider melaporkan status final.
+    const pending = (await db.query(
+      `SELECT order_id, telegram_id FROM xclipaibot_topups
+       WHERE status = 'PENDING'
+         AND created_at > NOW() - ($1 || ' minutes')::interval
+       ORDER BY created_at ASC
+       LIMIT 200`,
+      [String(TOPUP_POLL_WINDOW_MINUTES)]
+    )).rows;
+    for (let i = 0; i < pending.length; i += TOPUP_POLL_CONCURRENCY) {
+      const batch = pending.slice(i, i + TOPUP_POLL_CONCURRENCY);
+      await Promise.all(batch.map(pollOnePendingTopup));
+    }
+  } catch (err) {
+    console.error("[topup] sweep error:", err.message);
+  } finally {
+    topupPollRunning = false;
+  }
+}
+
+function startTopupPoller() {
+  if (!KLIKQRIS_API_KEY || !KLIKQRIS_MERCHANT_ID) {
+    console.log("[topup] auto-poll nonaktif (KLIKQRIS creds belum diset).");
+    return;
+  }
+  setInterval(() => { sweepPendingTopups(); }, TOPUP_POLL_INTERVAL_MS);
+  console.log(`[topup] auto-poll aktif tiap ${TOPUP_POLL_INTERVAL_MS / 1000}s (fallback tanpa webhook).`);
 }
 
 async function downloadTelegramFile(fileId) {
@@ -2122,6 +2195,7 @@ bot.on("polling_error", (err) => {
   console.error("Polling error:", err.code, err.message);
 });
 
+startTopupPoller();
 console.log("Bot Telegram AI Video Generator (Flora AI - Kling MC V3 PRO) sudah berjalan!");
 console.log(`Model tersedia: ${Object.keys(MODELS).join(", ")}`);
 console.log(`Admin IDs: ${ADMIN_IDS.length > 0 ? ADMIN_IDS.join(", ") : "(tidak diset - /addkeys dan /poolstatus tidak bisa diakses)"}`);
