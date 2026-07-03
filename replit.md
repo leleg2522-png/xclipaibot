@@ -33,7 +33,7 @@ This project runs directly on Replit. The "Start application" workflow runs `npm
 - Create: `POST /create` `{ order_id, id_merchant, amount, keterangan }` → `data.total_amount` (charge this to the buyer), `data.qris_url` (QR image), `data.direct_url` (pay page), `data.signature`, `data.expired_at`, `status:"PENDING"`.
 - Status: `GET /status/{id_merchant}/{order_id}`.
 - **Webhook** `POST /webhook/klikqris` (register this public URL in the KlikQRIS dashboard) — fired on `PAID`/`EXPIRED`. Verified by matching the webhook's `data.signature` against the signature stored at create time (NOT HMAC). Idempotent (credits only while the row is still `PENDING`), always returns HTTP 200. A "Cek pembayaran" button also polls `/status` as a fallback if the webhook is missed.
-- Packages live in `TOPUP_PACKAGES` (`index.js`), mapping nominal Rupiah → jumlah video; easy to edit.
+- **No fixed packages.** Price is flat: `PRICE_PER_VIDEO` (Rp2.000) per video (`index.js`). Users pick a quick amount or type `/topup <jumlah>` (e.g. `/topup 7`); charge = `jumlah × PRICE_PER_VIDEO`. Quick-pick buttons come from `TOPUP_QUICK_PICKS`; min/max from `TOPUP_MIN_VIDEOS`/`TOPUP_MAX_VIDEOS`.
 
 ## Multi-key pool system
 - Flora API keys are stored in the `api_key_pool` table; each user is assigned keys from the pool (`user_api_keys`).
